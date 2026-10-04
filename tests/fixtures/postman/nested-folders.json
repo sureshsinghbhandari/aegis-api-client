@@ -1,0 +1,173 @@
+{
+	"info": {
+		"_postman_id": "3fb38d4c-95c6-4e5e-ac8e-a45242cb8e41",
+		"name": "Nested folders",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Root request",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.example.com/root",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"root"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Level 1",
+			"description": {
+				"content": "# Level one\nMarkdown *description*",
+				"type": "text/markdown"
+			},
+			"item": [
+				{
+					"name": "Level 2 A",
+					"item": [
+						{
+							"name": "Level 3",
+							"item": [
+								{
+									"name": "Level 4",
+									"description": "Four levels down",
+									"item": [
+										{
+											"name": "Deep request",
+											"request": {
+												"method": "GET",
+												"header": [],
+												"url": {
+													"raw": "https://api.example.com/deep",
+													"protocol": "https",
+													"host": [
+														"api",
+														"example",
+														"com"
+													],
+													"path": [
+														"deep"
+													]
+												}
+											},
+											"response": []
+										}
+									]
+								},
+								{
+									"name": "Level 3 request",
+									"request": {
+										"method": "POST",
+										"header": [],
+										"body": {
+											"mode": "raw",
+											"raw": "plain text body",
+											"options": {
+												"raw": {
+													"language": "text"
+												}
+											}
+										},
+										"url": {
+											"raw": "https://api.example.com/l3",
+											"protocol": "https",
+											"host": [
+												"api",
+												"example",
+												"com"
+											],
+											"path": [
+												"l3"
+											]
+										}
+									},
+									"response": []
+								}
+							]
+						},
+						{
+							"name": "Level 2 request",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://api.example.com/l2",
+									"protocol": "https",
+									"host": [
+										"api",
+										"example",
+										"com"
+									],
+									"path": [
+										"l2"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Level 2 B (empty)",
+					"item": []
+				},
+				{
+					"name": "Level 1 request",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "https://api.example.com/l1",
+							"protocol": "https",
+							"host": [
+								"api",
+								"example",
+								"com"
+							],
+							"path": [
+								"l1"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Sibling",
+			"item": [
+				{
+					"name": "Sibling request",
+					"request": {
+						"method": "PUT",
+						"header": [],
+						"url": {
+							"raw": "https://api.example.com/sibling",
+							"protocol": "https",
+							"host": [
+								"api",
+								"example",
+								"com"
+							],
+							"path": [
+								"sibling"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}

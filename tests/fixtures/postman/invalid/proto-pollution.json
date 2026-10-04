@@ -1,0 +1,53 @@
+{
+	"info": {
+		"_postman_id": "0b9d9f0e-1c7a-4a5c-9a57-5b0d2f1a9e11",
+		"name": "Prototype pollution attempt",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"__proto__": { "polluted": "info" }
+	},
+	"item": [
+		{
+			"name": "Polluting request",
+			"__proto__": { "polluted": "item" },
+			"constructor": { "prototype": { "polluted": "constructor" } },
+			"x-custom": {
+				"harmless": true,
+				"__proto__": { "polluted": "nested" },
+				"list": [{ "__proto__": { "polluted": "in-array" }, "ok": 1 }]
+			},
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{}",
+					"__proto__": { "polluted": "body" }
+				},
+				"url": {
+					"raw": "https://example.com/pollute",
+					"protocol": "https",
+					"host": ["example", "com"],
+					"path": ["pollute"],
+					"__proto__": { "polluted": "url" }
+				},
+				"prototype": { "polluted": "request" }
+			},
+			"response": [
+				{
+					"name": "Example",
+					"status": "OK",
+					"code": 200,
+					"header": [],
+					"body": "",
+					"__proto__": { "polluted": "example" }
+				}
+			],
+			"protocolProfileBehavior": {
+				"followRedirects": false,
+				"__proto__": { "polluted": "profile" }
+			}
+		}
+	],
+	"__proto__": { "polluted": "top" },
+	"x-top-level": { "constructor": { "polluted": true }, "keep": "me" }
+}

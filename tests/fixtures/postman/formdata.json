@@ -1,0 +1,65 @@
+{
+	"info": {
+		"_postman_id": "a1b9247d-ddd1-461e-acb8-6f9d0da35e50",
+		"name": "Form data",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Upload avatar",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "caption",
+							"value": "Profile photo",
+							"type": "text",
+							"contentType": "text/plain",
+							"description": "Shown under the picture"
+						},
+						{
+							"key": "avatar",
+							"type": "file",
+							"src": "files/avatar.png",
+							"contentType": "image/png"
+						},
+						{
+							"key": "draft",
+							"value": "true",
+							"type": "text",
+							"disabled": true
+						},
+						{
+							"key": "attachment",
+							"type": "file",
+							"src": null
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseUrl}}/customers/1042/avatar",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"customers",
+						"1042",
+						"avatar"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "https://api.example.com/v1",
+			"type": "string"
+		}
+	]
+}

@@ -1,0 +1,139 @@
+{
+	"info": {
+		"_postman_id": "64f5bf7c-2d67-490f-a274-00aefdd1866a",
+		"name": "Scripts",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Orders",
+			"item": [
+				{
+					"name": "Create order",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"id": "e971af6c-79fa-4eb8-a98a-968a131a7504",
+								"type": "text/javascript",
+								"exec": [
+									"const ts = new Date().toISOString();",
+									"pm.variables.set(\"ts\", ts);",
+									"",
+									"// blank line above and trailing spaces below   ",
+									"console.log(ts);"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"id": "ab57c342-22d5-434e-a046-3c29db2d7d2d",
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"created\", () => {",
+									"  pm.expect(pm.response.code).to.eql(201);",
+									"});",
+									"pm.collectionVariables.set(\"orderId\", pm.response.json().id);"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"id": "5db9fddf-2f97-40a0-a254-f0cd0de01e70",
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"disabled\");"
+								]
+							},
+							"disabled": true
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"sku\": \"A-100\",\n  \"qty\": 2\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/orders",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"orders"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"id": "a6a4c0c4-4f94-4867-aa73-9140e0ccfad1",
+						"type": "text/javascript",
+						"exec": [
+							"pm.request.headers.add({ key: \"X-Folder\", value: \"orders\" });"
+						]
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"id": "01cec4c0-df42-47fc-a9a4-64c20ff34105",
+						"type": "text/javascript",
+						"exec": [
+							"pm.test(\"folder level\", () => pm.response.to.be.ok);"
+						]
+					}
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"id": "60e67749-f6d2-4b4c-a0fe-e4e2533219d3",
+				"type": "text/javascript",
+				"exec": [
+					"// collection prerequest",
+					"pm.globals.set(\"run\", \"1\");"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"id": "3a50db9a-5ade-42f7-aef0-e3df3be1424c",
+				"type": "text/javascript",
+				"exec": [
+					"pm.test(\"collection level\", () => pm.expect(true).to.be.true);"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "https://api.example.com/v1",
+			"type": "string"
+		}
+	]
+}

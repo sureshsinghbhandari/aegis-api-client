@@ -1,0 +1,39 @@
+appId: com.example.aegis-api-client
+productName: Aegis API Client
+copyright: Copyright (c) Aegis API Client contributors
+directories:
+  output: release
+  buildResources: build
+asar: true
+files:
+  - dist/main/**
+  - dist/renderer/**
+  - package.json
+  - "!**/*.map"
+extraResources:
+  # Drizzle SQL migrations are read from disk at startup (not part of the asar).
+  - from: database/migrations
+    to: migrations
+asarUnpack:
+  - node_modules/quickjs-emscripten*/**
+  - node_modules/@jitl/**
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+mac:
+  target: [dmg]
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+linux:
+  target: [AppImage, deb]
+  category: Development
+# Code signing is organization specific: configure `win.certificateFile` / `mac.identity` in CI.
+# Auto-update is intentionally NOT configured (local-only mode: no application network traffic).
+publish: null

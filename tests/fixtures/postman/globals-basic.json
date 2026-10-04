@@ -1,0 +1,27 @@
+{
+	"id": "dc5cb5ec-3f8e-4dd4-a34c-af18759c0b95",
+	"name": "My Workspace Globals",
+	"values": [
+		{
+			"key": "tenant",
+			"value": "acme",
+			"type": "default",
+			"enabled": true
+		},
+		{
+			"key": "globalSecret",
+			"value": "globals-secret-literal-1290",
+			"type": "secret",
+			"enabled": true
+		},
+		{
+			"key": "oldVar",
+			"value": "legacy",
+			"type": "default",
+			"enabled": false
+		}
+	],
+	"_postman_variable_scope": "globals",
+	"_postman_exported_at": "2024-05-02T10:25:01.113Z",
+	"_postman_exported_using": "Postman/11.1.0"
+}

@@ -1,0 +1,208 @@
+{
+	"info": {
+		"_postman_id": "131402a1-34f1-4c2a-a9d8-258ff5f8d300",
+		"name": "Auth inheritance",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Inherits collection auth (root)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.example.com/v1/a",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"a"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Reports",
+			"item": [
+				{
+					"name": "Inherits folder auth",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.example.com/v1/reports",
+							"protocol": "https",
+							"host": [
+								"api",
+								"example",
+								"com"
+							],
+							"path": [
+								"v1",
+								"reports"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Overrides with basic",
+					"request": {
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "reporter",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{reporterPassword}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.example.com/v1/reports/1",
+							"protocol": "https",
+							"host": [
+								"api",
+								"example",
+								"com"
+							],
+							"path": [
+								"v1",
+								"reports",
+								"1"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Explicit no auth",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.example.com/v1/reports/public",
+							"protocol": "https",
+							"host": [
+								"api",
+								"example",
+								"com"
+							],
+							"path": [
+								"v1",
+								"reports",
+								"public"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Archived",
+					"item": [
+						{
+							"name": "Inherits from Reports",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://api.example.com/v1/reports/archive",
+									"protocol": "https",
+									"host": [
+										"api",
+										"example",
+										"com"
+									],
+									"path": [
+										"v1",
+										"reports",
+										"archive"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				}
+			],
+			"auth": {
+				"type": "bearer",
+				"bearer": [
+					{
+						"key": "token",
+						"value": "{{reportsToken}}",
+						"type": "string"
+					}
+				]
+			}
+		},
+		{
+			"name": "Open",
+			"item": [
+				{
+					"name": "Folder without auth",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.example.com/v1/open",
+							"protocol": "https",
+							"host": [
+								"api",
+								"example",
+								"com"
+							],
+							"path": [
+								"v1",
+								"open"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"auth": {
+				"type": "noauth"
+			}
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"id": "211f707e-a689-4578-a0d7-184d7e1dd11e",
+				"type": "text/javascript",
+				"exec": [
+					"// collection level",
+					"pm.collectionVariables.set(\"startedAt\", Date.now());"
+				]
+			}
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{accessToken}}",
+				"type": "string"
+			}
+		]
+	}
+}

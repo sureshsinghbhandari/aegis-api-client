@@ -1,0 +1,2029 @@
+{
+	"info": {
+		"_postman_id": "254e0930-c4f2-483a-a5f6-f35f2d5bd221",
+		"name": "Customer API",
+		"description": {
+			"content": "# Customer API\nA realistic collection used as an import/export fixture.",
+			"type": "text/markdown"
+		},
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071",
+		"version": {
+			"major": 3,
+			"minor": 2,
+			"patch": 1
+		}
+	},
+	"item": [
+		{
+			"name": "Authentication",
+			"description": "Token management endpoints.",
+			"item": [
+				{
+					"name": "Login (basic)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"id": "b73617b3-b6f2-43ab-a90c-76a1982b462f",
+								"type": "text/javascript",
+								"exec": [
+									"const body = pm.response.json();",
+									"pm.collectionVariables.set(\"accessToken\", body.access_token);",
+									"pm.collectionVariables.set(\"refreshToken\", body.refresh_token);"
+								]
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "api-user",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "hunter2-literal",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"remember\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/login",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						},
+						"description": {
+							"content": "Exchanges **basic credentials** for a token pair.",
+							"type": "text/markdown"
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Refresh token",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"refresh_token\": \"{{refreshToken}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/auth/refresh",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"auth",
+								"refresh"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/auth/logout",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"auth",
+								"logout"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "OAuth2 token (client credentials)",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/x-www-form-urlencoded",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "client_id",
+									"value": "{{clientId}}",
+									"type": "text"
+								},
+								{
+									"key": "client_secret",
+									"value": "{{clientSecret}}",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "https://auth.example.com/oauth/token",
+							"protocol": "https",
+							"host": [
+								"auth",
+								"example",
+								"com"
+							],
+							"path": [
+								"oauth",
+								"token"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Who am I",
+					"id": "ef4957ec-5768-4d4b-aab5-6fa32a3f436c",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/auth/me",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"auth",
+								"me"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"id": "94742a15-ccd8-47f2-a8f6-6492aa1cbff1"
+		},
+		{
+			"name": "Customers",
+			"description": {
+				"content": "CRUD for customers.",
+				"type": "text/plain"
+			},
+			"item": [
+				{
+					"name": "List customers",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "X-Page-Size-Hint",
+								"value": "50",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/customers?page=1&per_page=50&status=active&include=addresses",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"customers"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "per_page",
+									"value": "50"
+								},
+								{
+									"key": "status",
+									"value": "active",
+									"description": "active | blocked | all"
+								},
+								{
+									"key": "include",
+									"value": "addresses"
+								},
+								{
+									"key": "expand",
+									"value": "orders",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get customer",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/customers/:customerId",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"customers",
+								":customerId"
+							],
+							"variable": [
+								{
+									"key": "customerId",
+									"value": "1042",
+									"description": "Customer id"
+								}
+							]
+						}
+					},
+					"response": [
+						{
+							"id": "a8c371b0-91ed-4de5-a238-1ee5b7d00a1e",
+							"name": "Existing customer",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json",
+										"type": "text"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/customers/:customerId",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"customers",
+										":customerId"
+									],
+									"variable": [
+										{
+											"key": "customerId",
+											"value": "1042"
+										}
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n  \"id\": 1042,\n  \"name\": \"Ada Lovelace\",\n  \"email\": \"ada@example.com\"\n}"
+						},
+						{
+							"id": "8f406e74-6724-46ab-a54a-ab9946554a0c",
+							"name": "Customer not found",
+							"originalRequest": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept",
+										"value": "application/json",
+										"type": "text"
+									}
+								],
+								"url": {
+									"raw": "{{baseUrl}}/customers/:customerId",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"customers",
+										":customerId"
+									],
+									"variable": [
+										{
+											"key": "customerId",
+											"value": "1042"
+										}
+									]
+								}
+							},
+							"status": "Not Found",
+							"code": 404,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\"error\":\"not_found\"}"
+						}
+					]
+				},
+				{
+					"name": "Create customer",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"id": "23f892ce-b696-4496-a3d3-bf970252ae67",
+								"type": "text/javascript",
+								"exec": [
+									"pm.variables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"id": "40e4271b-66f1-4ea0-a33f-4e7d24212dfa",
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"201\", () => pm.response.to.have.status(201));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Grace Hopper\",\n  \"email\": \"grace@example.com\",\n  \"marketing\": {\n    \"optIn\": true\n  }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/customers",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"customers"
+							]
+						}
+					},
+					"response": [
+						{
+							"id": "1b409090-7030-4a6e-a613-e4208dcc0aac",
+							"name": "Created",
+							"originalRequest": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json",
+										"type": "text"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Grace Hopper\"\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/customers",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"customers"
+									]
+								},
+								"auth": {
+									"type": "bearer",
+									"bearer": [
+										{
+											"key": "token",
+											"value": "example-bearer-literal-6201",
+											"type": "string"
+										}
+									]
+								}
+							},
+							"status": "Created",
+							"code": 201,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Location",
+									"value": "/customers/1043"
+								}
+							],
+							"cookie": [],
+							"body": "{\"id\":1043}"
+						}
+					]
+				},
+				{
+					"name": "Replace customer",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "If-Match",
+								"value": "{{etag}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Ada King\",\n  \"email\": \"ada.king@example.com\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/customers/:customerId",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"customers",
+								":customerId"
+							],
+							"variable": [
+								{
+									"key": "customerId",
+									"value": "1042"
+								}
+							]
+						}
+					},
+					"response": [],
+					"protocolProfileBehavior": {
+						"followRedirects": false,
+						"maxRedirects": 3
+					}
+				},
+				{
+					"name": "Patch customer",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/merge-patch+json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"phone\":\"+44 20 7946 0000\"}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/customers/:customerId",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"customers",
+								":customerId"
+							],
+							"variable": [
+								{
+									"key": "customerId",
+									"value": "1042"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete customer",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/customers/:customerId?hard=false",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"customers",
+								":customerId"
+							],
+							"query": [
+								{
+									"key": "hard",
+									"value": "false"
+								}
+							],
+							"variable": [
+								{
+									"key": "customerId",
+									"value": "1042"
+								}
+							]
+						}
+					},
+					"response": [],
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true,
+						"strictSSL": false
+					}
+				},
+				{
+					"name": "Search customers",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"filter\": {\n    \"email\": {\n      \"$like\": \"%@example.com\"\n    }\n  },\n  \"sort\": [\n    \"-createdAt\"\n  ],\n  \"limit\": 25\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/customers/search",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"customers",
+								"search"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Bulk import (NDJSON)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/x-ndjson",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\"name\":\"A\"}\n{\"name\":\"B\"}\n",
+							"options": {
+								"raw": {
+									"language": "text"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/customers/bulk",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"customers",
+								"bulk"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Export customers (XML)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/xml",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/customers/export?format=xml",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"customers",
+								"export"
+							],
+							"query": [
+								{
+									"key": "format",
+									"value": "xml"
+								}
+							]
+						},
+						"description": {
+							"content": "Returns **XML**.",
+							"type": "text/plain"
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Customer notes",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "<note><text>Called customer</text></note>",
+							"options": {
+								"raw": {
+									"language": "xml"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/customers/:customerId/notes",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"customers",
+								":customerId",
+								"notes"
+							],
+							"variable": [
+								{
+									"key": "customerId",
+									"value": "1042"
+								}
+							]
+						},
+						"x-request-flag": true
+					},
+					"response": [],
+					"x-custom": {
+						"owner": "support-team",
+						"tier": 2,
+						"tags": [
+							"crm",
+							"notes"
+						]
+					}
+				},
+				{
+					"name": "Addresses",
+					"description": "Nested folder of addresses.",
+					"item": [
+						{
+							"name": "List addresses",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "{{baseUrl}}/customers/:customerId/addresses",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"customers",
+										":customerId",
+										"addresses"
+									],
+									"variable": [
+										{
+											"key": "customerId",
+											"value": "1042"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Add address",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json",
+										"type": "text"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"line1\": \"10 Downing St\",\n  \"city\": \"London\",\n  \"postcode\": \"SW1A 2AA\"\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{baseUrl}}/customers/:customerId/addresses",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"customers",
+										":customerId",
+										"addresses"
+									],
+									"variable": [
+										{
+											"key": "customerId",
+											"value": "1042"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Remove address",
+							"request": {
+								"method": "DELETE",
+								"header": [],
+								"url": {
+									"raw": "{{baseUrl}}/customers/:customerId/addresses/:addressId",
+									"host": [
+										"{{baseUrl}}"
+									],
+									"path": [
+										"customers",
+										":customerId",
+										"addresses",
+										":addressId"
+									],
+									"variable": [
+										{
+											"key": "customerId",
+											"value": "1042"
+										},
+										{
+											"key": "addressId",
+											"value": "a-7"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Verification",
+							"item": [
+								{
+									"name": "Verify postcode",
+									"request": {
+										"method": "GET",
+										"header": [],
+										"url": {
+											"raw": "{{baseUrl}}/verify/postcode?code=SW1A%202AA",
+											"host": [
+												"{{baseUrl}}"
+											],
+											"path": [
+												"verify",
+												"postcode"
+											],
+											"query": [
+												{
+													"key": "code",
+													"value": "SW1A%202AA"
+												}
+											]
+										}
+									},
+									"response": []
+								}
+							],
+							"variable": [
+								{
+									"key": "verifyRegion",
+									"value": "GB",
+									"type": "string"
+								},
+								{
+									"key": "verifyKey",
+									"value": "folder-secret-literal-4410",
+									"type": "secret"
+								}
+							]
+						}
+					]
+				}
+			],
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"id": "30cbc819-4043-4600-aa94-afff5f9cc4ca",
+						"type": "text/javascript",
+						"exec": [
+							"pm.request.headers.upsert({ key: \"X-Domain\", value: \"customers\" });"
+						]
+					}
+				}
+			],
+			"x-custom": {
+				"reviewed": true
+			}
+		},
+		{
+			"name": "Orders",
+			"item": [
+				{
+					"name": "List orders",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/orders?status=open&limit=20",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"orders"
+							],
+							"query": [
+								{
+									"key": "status",
+									"value": "open"
+								},
+								{
+									"key": "limit",
+									"value": "20"
+								},
+								{
+									"key": "since",
+									"value": "{{since}}",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Create order",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"customerId\": 1042,\n  \"lines\": [\n    {\n      \"sku\": \"A-100\",\n      \"qty\": 2\n    },\n    {\n      \"sku\": \"B-200\",\n      \"qty\": 1\n    }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/orders",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"orders"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get order",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/orders/:orderId",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"orders",
+								":orderId"
+							],
+							"variable": [
+								{
+									"key": "orderId",
+									"value": "ORD-2231"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Cancel order",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"reason\": \"customer request\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/orders/:orderId/cancel",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"orders",
+								":orderId",
+								"cancel"
+							],
+							"variable": [
+								{
+									"key": "orderId",
+									"value": "ORD-2231"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Order invoice (PDF)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/pdf",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/orders/:orderId/invoice.pdf",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"orders",
+								":orderId",
+								"invoice.pdf"
+							],
+							"variable": [
+								{
+									"key": "orderId",
+									"value": "ORD-2231"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Order timeline",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"id": "a97eefdf-b4a9-4982-aad0-5f7da9f49c4f",
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"has events\", () => pm.expect(pm.response.json().events).to.be.an(\"array\"));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/orders/:orderId/timeline",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"orders",
+								":orderId",
+								"timeline"
+							],
+							"variable": [
+								{
+									"key": "orderId",
+									"value": "ORD-2231"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Payments",
+			"item": [
+				{
+					"name": "Create payment intent",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Idempotency-Key",
+								"value": "{{idempotencyKey}}",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": 4999,\n  \"currency\": \"gbp\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/payments/intents",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"payments",
+								"intents"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Capture payment",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "key",
+									"value": "X-Payments-Key",
+									"type": "string"
+								},
+								{
+									"key": "value",
+									"value": "apikey-literal-123",
+									"type": "string"
+								},
+								{
+									"key": "in",
+									"value": "header",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/payments/:id/capture",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"payments",
+								":id",
+								"capture"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "pi_3Nq"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Refund payment",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": 1000\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/payments/:id/refund",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"payments",
+								":id",
+								"refund"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "pi_3Nq"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List webhooks",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/payments/webhooks",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"payments",
+								"webhooks"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Register webhook",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://hooks.example.com/payments\",\n  \"events\": [\n    \"payment.succeeded\",\n    \"payment.failed\"\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/payments/webhooks",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"payments",
+								"webhooks"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "AWS signed export",
+					"request": {
+						"auth": {
+							"type": "awsv4",
+							"awsv4": [
+								{
+									"key": "accessKey",
+									"value": "AKIAEXAMPLE",
+									"type": "string"
+								},
+								{
+									"key": "secretKey",
+									"value": "aws-secret-key-literal-77",
+									"type": "string"
+								},
+								{
+									"key": "region",
+									"value": "eu-west-1",
+									"type": "string"
+								},
+								{
+									"key": "service",
+									"value": "execute-api",
+									"type": "string"
+								},
+								{
+									"key": "sessionToken",
+									"value": "{{awsSessionToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://ledger.eu-west-1.amazonaws.com/export",
+							"protocol": "https",
+							"host": [
+								"ledger",
+								"eu-west-1",
+								"amazonaws",
+								"com"
+							],
+							"path": [
+								"export"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Files",
+			"item": [
+				{
+					"name": "Upload documents",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "title",
+									"value": "Contract",
+									"type": "text"
+								},
+								{
+									"key": "document",
+									"type": "file",
+									"src": "files/contract.pdf",
+									"contentType": "application/pdf"
+								},
+								{
+									"key": "thumbnail",
+									"type": "file",
+									"src": null
+								},
+								{
+									"key": "note",
+									"value": "internal",
+									"type": "text",
+									"disabled": true,
+									"description": "not sent"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{baseUrl}}/files",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"files"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Upload raw binary",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/octet-stream",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "file",
+							"file": {
+								"src": "files/blob.bin"
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/files/raw",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"files",
+								"raw"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Download file",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/files/:fileId/content",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"files",
+								":fileId",
+								"content"
+							],
+							"variable": [
+								{
+									"key": "fileId",
+									"value": "f-19"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "File metadata",
+					"request": {
+						"method": "HEAD",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/files/:fileId",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"files",
+								":fileId"
+							],
+							"variable": [
+								{
+									"key": "fileId",
+									"value": "f-19"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Options preflight",
+					"request": {
+						"method": "OPTIONS",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/files",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"files"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "GraphQL",
+			"item": [
+				{
+					"name": "Customer by id",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query Customer($id: ID!) {\n  customer(id: $id) {\n    id\n    name\n    orders { id total }\n  }\n}",
+								"variables": "{\n  \"id\": \"1042\"\n}"
+							}
+						},
+						"url": {
+							"raw": "https://graph.example.com/graphql",
+							"protocol": "https",
+							"host": [
+								"graph",
+								"example",
+								"com"
+							],
+							"path": [
+								"graphql"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Create customer mutation",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "mutation($input: NewCustomer!) { createCustomer(input: $input) { id } }",
+								"variables": ""
+							}
+						},
+						"url": {
+							"raw": "https://graph.example.com/graphql",
+							"protocol": "https",
+							"host": [
+								"graph",
+								"example",
+								"com"
+							],
+							"path": [
+								"graphql"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Admin",
+			"description": "Operational endpoints.",
+			"item": [
+				{
+					"name": "Health check",
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/health",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"health"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Digest protected",
+					"request": {
+						"auth": {
+							"type": "digest",
+							"digest": [
+								{
+									"key": "username",
+									"value": "admin",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "digest-password-literal",
+									"type": "string"
+								},
+								{
+									"key": "realm",
+									"value": "metrics",
+									"type": "string"
+								},
+								{
+									"key": "algorithm",
+									"value": "MD5",
+									"type": "string"
+								},
+								{
+									"key": "qop",
+									"value": "auth",
+									"type": "string"
+								},
+								{
+									"key": "nonce",
+									"value": "",
+									"type": "string"
+								},
+								{
+									"key": "nonceCount",
+									"value": "",
+									"type": "string"
+								},
+								{
+									"key": "clientNonce",
+									"value": "",
+									"type": "string"
+								},
+								{
+									"key": "opaque",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/metrics",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"metrics"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Hawk protected",
+					"request": {
+						"auth": {
+							"type": "hawk",
+							"hawk": [
+								{
+									"key": "authId",
+									"value": "dh37fgj492je",
+									"type": "string"
+								},
+								{
+									"key": "authKey",
+									"value": "hawk-key-literal-9981",
+									"type": "string"
+								},
+								{
+									"key": "algorithm",
+									"value": "sha256",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/audit",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"audit"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "NTLM protected",
+					"request": {
+						"auth": {
+							"type": "ntlm",
+							"ntlm": [
+								{
+									"key": "username",
+									"value": "corp\\svc",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "ntlm-password-literal",
+									"type": "string"
+								},
+								{
+									"key": "domain",
+									"value": "CORP",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/legacy",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"legacy"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "JWT bearer",
+					"request": {
+						"auth": {
+							"type": "jwt",
+							"jwt": [
+								{
+									"key": "algorithm",
+									"value": "HS256",
+									"type": "string"
+								},
+								{
+									"key": "secret",
+									"value": "jwt-secret-literal-2210",
+									"type": "string"
+								},
+								{
+									"key": "isSecretBase64Encoded",
+									"value": false,
+									"type": "boolean"
+								},
+								{
+									"key": "payload",
+									"value": "{\"sub\":\"admin\"}",
+									"type": "string"
+								},
+								{
+									"key": "addTokenTo",
+									"value": "header",
+									"type": "string"
+								},
+								{
+									"key": "headerPrefix",
+									"value": "Bearer",
+									"type": "string"
+								},
+								{
+									"key": "queryParamKey",
+									"value": "token",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/jwt",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"jwt"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "OAuth1 signed",
+					"request": {
+						"auth": {
+							"type": "oauth1",
+							"oauth1": [
+								{
+									"key": "consumerKey",
+									"value": "ck-1",
+									"type": "string"
+								},
+								{
+									"key": "consumerSecret",
+									"value": "oauth1-consumer-secret-literal",
+									"type": "string"
+								},
+								{
+									"key": "token",
+									"value": "tk-1",
+									"type": "string"
+								},
+								{
+									"key": "tokenSecret",
+									"value": "oauth1-token-secret-literal",
+									"type": "string"
+								},
+								{
+									"key": "signatureMethod",
+									"value": "HMAC-SHA1",
+									"type": "string"
+								},
+								{
+									"key": "version",
+									"value": "1.0",
+									"type": "string"
+								},
+								{
+									"key": "addParamsToHeader",
+									"value": true,
+									"type": "boolean"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://legacy.example.com/api/v1/ping",
+							"protocol": "https",
+							"host": [
+								"legacy",
+								"example",
+								"com"
+							],
+							"path": [
+								"api",
+								"v1",
+								"ping"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "External script",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"id": "b738c24e-0e23-4591-a033-542428cf6649",
+								"type": "text/javascript",
+								"src": "https://scripts.example.com/helpers.js"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"id": "8880d9f1-bbc8-4a1e-a016-e79b70c86d69",
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"version\", () => pm.expect(pm.response.text()).to.include(\".\"));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/version",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"version"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Item description at item level",
+					"description": "Description stored on the item instead of the request.",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/admin/about",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"admin",
+								"about"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"auth": {
+				"type": "bearer",
+				"bearer": [
+					{
+						"key": "token",
+						"value": "{{adminToken}}",
+						"type": "string"
+					}
+				]
+			}
+		},
+		{
+			"name": "Ping (root request)",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/ping",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"ping"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"id": "a4f34d94-4333-4205-a01d-5542b276c515",
+				"type": "text/javascript",
+				"exec": [
+					"// Applies to every request",
+					"pm.request.headers.upsert({ key: \"X-Client\", value: \"aegis\" });"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"id": "30422d23-0589-42c0-ac66-a82f4d325b5e",
+				"type": "text/javascript",
+				"exec": [
+					"pm.test(\"response time < 2s\", () => pm.expect(pm.response.responseTime).to.be.below(2000));"
+				]
+			}
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{accessToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "https://api.example.com/v1",
+			"type": "string"
+		},
+		{
+			"key": "accessToken",
+			"value": "",
+			"type": "any"
+		},
+		{
+			"key": "refreshToken",
+			"value": "",
+			"type": "any"
+		},
+		{
+			"key": "clientId",
+			"value": "aegis-batch",
+			"type": "string"
+		},
+		{
+			"key": "clientSecret",
+			"value": "secret-variable-literal-5521",
+			"type": "secret"
+		},
+		{
+			"key": "adminToken",
+			"value": "admin-token-literal-0042",
+			"type": "secret",
+			"description": "Admin API token"
+		},
+		{
+			"key": "etag",
+			"value": "\"v1\"",
+			"type": "string",
+			"disabled": true
+		}
+	],
+	"protocolProfileBehavior": {
+		"followRedirects": true,
+		"maxRedirects": 10
+	},
+	"x-aegis-owner": {
+		"team": "platform",
+		"contacts": [
+			"a@example.com"
+		]
+	},
+	"_postman_note": "preserved top-level extra"
+}

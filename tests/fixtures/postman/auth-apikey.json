@@ -1,0 +1,92 @@
+{
+	"info": {
+		"_postman_id": "4f7e447f-6d24-4550-af80-7864a42558d6",
+		"name": "Auth API key",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "API key header",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "key",
+							"value": "X-API-Key",
+							"type": "string"
+						},
+						{
+							"key": "value",
+							"value": "apikey-header-literal-7731",
+							"type": "string"
+						},
+						{
+							"key": "in",
+							"value": "header",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.example.com/v1/reports",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"reports"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "API key query",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "key",
+							"value": "api_key",
+							"type": "string"
+						},
+						{
+							"key": "value",
+							"value": "apikey-query-literal-5520",
+							"type": "string"
+						},
+						{
+							"key": "in",
+							"value": "query",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.example.com/v1/reports",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"reports"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

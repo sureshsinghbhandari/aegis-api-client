@@ -1,0 +1,76 @@
+{
+  "name": "aegis-api-client",
+  "productName": "Aegis API Client",
+  "version": "0.1.0",
+  "description": "Secure, local-first enterprise API client with Postman collection compatibility.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/main/main.cjs",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "build:main": "node scripts/build-main.mjs",
+    "build:renderer": "vite build --config apps/desktop/renderer/vite.config.ts",
+    "build:sandbox-libs": "node scripts/build-sandbox-libs.mjs",
+    "start": "electron .",
+    "pack": "npm run build && electron-builder --config electron-builder.yml --dir",
+    "dist": "npm run build && electron-builder --config electron-builder.yml",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:security": "vitest run tests/security",
+    "test:watch": "vitest",
+    "test:e2e": "npm run build && playwright test",
+    "db:generate": "drizzle-kit generate",
+    "audit": "npm audit --omit=dev",
+    "verify": "npm run lint && npm run typecheck && npm test",
+    "smoke:packaged": "node scripts/smoke-packaged.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@tanstack/react-virtual": "^3.14.13",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/tough-cookie": "^4.0.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "chai": "^6.3.0",
+    "drizzle-kit": "^0.31.11",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.12.0",
+    "monaco-editor": "^0.57.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.0",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3",
+    "zustand": "^5.0.15"
+  },
+  "allowScripts": {
+    "electron@44.5.1": true,
+    "esbuild@0.18.20": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.3",
+    "quickjs-emscripten": "^0.32.0",
+    "tough-cookie": "^6.0.2",
+    "undici": "^8.11.2",
+    "zod": "^4.6.5"
+  },
+  "author": "Aegis API Client contributors"
+}

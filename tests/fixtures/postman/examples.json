@@ -1,0 +1,165 @@
+{
+	"info": {
+		"_postman_id": "337c5b94-4d8b-452d-a003-014b9e0e4dfd",
+		"name": "Examples",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Get customer",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "https://api.example.com/v1/customers/1042",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"customers",
+						"1042"
+					]
+				}
+			},
+			"response": [
+				{
+					"id": "477a6332-4fad-4b5b-ac70-a3911878a30a",
+					"name": "OK",
+					"originalRequest": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "https://api.example.com/v1/customers/1042",
+							"protocol": "https",
+							"host": [
+								"api",
+								"example",
+								"com"
+							],
+							"path": [
+								"v1",
+								"customers",
+								"1042"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json; charset=utf-8"
+						},
+						{
+							"key": "X-RateLimit-Remaining",
+							"value": "59"
+						}
+					],
+					"cookie": [
+						{
+							"domain": "api.example.com",
+							"path": "/",
+							"secure": true,
+							"httpOnly": true,
+							"name": "sid",
+							"value": "abc123"
+						}
+					],
+					"body": "{\n  \"id\": 1042,\n  \"name\": \"Ada Lovelace\"\n}",
+					"responseTime": null
+				},
+				{
+					"id": "0ec87685-6b4e-4a7a-ae27-81d2c081d11a",
+					"name": "Not found",
+					"originalRequest": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "https://api.example.com/v1/customers/1042",
+							"protocol": "https",
+							"host": [
+								"api",
+								"example",
+								"com"
+							],
+							"path": [
+								"v1",
+								"customers",
+								"1042"
+							]
+						}
+					},
+					"status": "Not Found",
+					"code": 404,
+					"_postman_previewlanguage": "html",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "text/html"
+						}
+					],
+					"cookie": [],
+					"body": "<h1>Not Found</h1>"
+				},
+				{
+					"id": "9e5d0bff-34fc-4371-a4de-53ae972e3d0a",
+					"name": "Server error (raw header string)",
+					"originalRequest": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "https://api.example.com/v1/customers/1042",
+							"protocol": "https",
+							"host": [
+								"api",
+								"example",
+								"com"
+							],
+							"path": [
+								"v1",
+								"customers",
+								"1042"
+							]
+						}
+					},
+					"status": "Internal Server Error",
+					"code": 500,
+					"_postman_previewlanguage": "text",
+					"header": "Content-Type: text/plain\nRetry-After: 30",
+					"cookie": [],
+					"body": "oops"
+				}
+			]
+		}
+	]
+}

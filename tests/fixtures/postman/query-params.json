@@ -1,0 +1,51 @@
+{
+	"info": {
+		"_postman_id": "d3beedb3-1178-45ee-a650-973a799e68ad",
+		"name": "Query params",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Search",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.example.com/v1/search?q={{term}}&page=2&sort=name%20asc",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"search"
+					],
+					"query": [
+						{
+							"key": "q",
+							"value": "{{term}}",
+							"description": "Free text query"
+						},
+						{
+							"key": "page",
+							"value": "2"
+						},
+						{
+							"key": "sort",
+							"value": "name%20asc"
+						},
+						{
+							"key": "debug",
+							"value": "1",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

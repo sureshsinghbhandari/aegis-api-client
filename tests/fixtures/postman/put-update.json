@@ -1,0 +1,62 @@
+{
+	"info": {
+		"_postman_id": "6d44a960-61c8-4924-a1d8-5fcac9e09531",
+		"name": "Put update",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Replace customer",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "If-Match",
+						"value": "\"v7\"",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"name\": \"Ada King\",\n  \"email\": \"ada.king@example.com\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseUrl}}/customers/:customerId",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"customers",
+						":customerId"
+					],
+					"variable": [
+						{
+							"key": "customerId",
+							"value": "1042",
+							"description": "Customer identifier"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "https://api.example.com/v1",
+			"type": "string"
+		}
+	]
+}

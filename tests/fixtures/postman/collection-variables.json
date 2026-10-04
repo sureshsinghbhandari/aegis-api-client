@@ -1,0 +1,66 @@
+{
+	"info": {
+		"_postman_id": "3e954406-3134-4d07-ae46-16de07b1728d",
+		"name": "Collection variables",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Uses variables",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/things?key={{apiKey}}",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"things"
+					],
+					"query": [
+						{
+							"key": "key",
+							"value": "{{apiKey}}"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "https://api.example.com/v1",
+			"type": "string",
+			"description": "Base URL"
+		},
+		{
+			"key": "apiKey",
+			"value": "secret-variable-literal-8842",
+			"type": "secret"
+		},
+		{
+			"key": "retries",
+			"value": "3",
+			"type": "number"
+		},
+		{
+			"key": "strict",
+			"value": "true",
+			"type": "boolean"
+		},
+		{
+			"key": "legacyFlag",
+			"value": "off",
+			"type": "string",
+			"disabled": true
+		},
+		{
+			"key": "noType",
+			"value": "plain"
+		}
+	]
+}

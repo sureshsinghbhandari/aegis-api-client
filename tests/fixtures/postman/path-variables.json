@@ -1,0 +1,91 @@
+{
+	"info": {
+		"_postman_id": "4996bb14-7530-4cc8-ae28-9cf12f6bff3e",
+		"name": "Path variables",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Get order line",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.example.com/v1/users/:userId/orders/{{orderId}}/lines/:lineNo",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"users",
+						":userId",
+						"orders",
+						"{{orderId}}",
+						"lines",
+						":lineNo"
+					],
+					"variable": [
+						{
+							"key": "userId",
+							"value": "42",
+							"description": "Numeric user id"
+						},
+						{
+							"key": "lineNo",
+							"value": "3"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Colon in host and braces",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{scheme}}://{{host}}:8443/api/:version/ping",
+					"protocol": "{{scheme}}",
+					"host": [
+						"{{host}}"
+					],
+					"port": "8443",
+					"path": [
+						"api",
+						":version",
+						"ping"
+					],
+					"variable": [
+						{
+							"key": "version",
+							"value": "v2"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "orderId",
+			"value": "ORD-2231",
+			"type": "string"
+		},
+		{
+			"key": "host",
+			"value": "localhost",
+			"type": "string"
+		},
+		{
+			"key": "scheme",
+			"value": "https",
+			"type": "string"
+		}
+	]
+}

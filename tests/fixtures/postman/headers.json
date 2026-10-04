@@ -1,0 +1,61 @@
+{
+	"info": {
+		"_postman_id": "5a7102b3-00fa-4168-ae0a-2e49d0b809dd",
+		"name": "Headers",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "With headers",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "X-Trace-Id",
+						"value": "{{traceId}}",
+						"type": "text",
+						"description": "Correlation id"
+					},
+					{
+						"key": "X-Debug",
+						"value": "true",
+						"type": "text",
+						"disabled": true
+					},
+					{
+						"key": "Accept-Language",
+						"value": "en-GB, en;q=0.8",
+						"type": "text"
+					},
+					{
+						"key": "Cache-Control",
+						"value": "no-cache",
+						"type": "text",
+						"disabled": true,
+						"description": "Turned off while testing"
+					}
+				],
+				"url": {
+					"raw": "https://api.example.com/v1/headers",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"headers"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

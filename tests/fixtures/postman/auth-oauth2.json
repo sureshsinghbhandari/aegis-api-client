@@ -1,0 +1,184 @@
+{
+	"info": {
+		"_postman_id": "fd87162d-1738-43af-a9e4-5e08f8b68c67",
+		"name": "Auth OAuth 2.0",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Auth code with PKCE",
+			"request": {
+				"auth": {
+					"type": "oauth2",
+					"oauth2": [
+						{
+							"key": "redirect_uri",
+							"value": "https://oauth.pstmn.io/v1/callback",
+							"type": "string"
+						},
+						{
+							"key": "grant_type",
+							"value": "authorization_code_with_pkce",
+							"type": "string"
+						},
+						{
+							"key": "code_challenge_method",
+							"value": "SHA-256",
+							"type": "string"
+						},
+						{
+							"key": "accessTokenUrl",
+							"value": "https://auth.example.com/oauth/token",
+							"type": "string"
+						},
+						{
+							"key": "authUrl",
+							"value": "https://auth.example.com/oauth/authorize",
+							"type": "string"
+						},
+						{
+							"key": "clientId",
+							"value": "aegis-desktop",
+							"type": "string"
+						},
+						{
+							"key": "scope",
+							"value": "openid profile offline_access",
+							"type": "string"
+						},
+						{
+							"key": "tokenName",
+							"value": "Profile token",
+							"type": "string"
+						},
+						{
+							"key": "addTokenTo",
+							"value": "header",
+							"type": "string"
+						},
+						{
+							"key": "client_authentication",
+							"value": "body",
+							"type": "string"
+						},
+						{
+							"key": "refreshRequestParams",
+							"value": [],
+							"type": "any"
+						},
+						{
+							"key": "tokenRequestParams",
+							"value": [
+								{
+									"key": "audience",
+									"value": "api",
+									"enabled": true,
+									"send_as": "request_body"
+								}
+							],
+							"type": "any"
+						},
+						{
+							"key": "authRequestParams",
+							"value": [],
+							"type": "any"
+						},
+						{
+							"key": "challengeAlgorithm",
+							"value": "S256",
+							"type": "string"
+						},
+						{
+							"key": "useBrowser",
+							"value": false,
+							"type": "boolean"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.example.com/v1/profile",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"profile"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Client credentials",
+			"request": {
+				"auth": {
+					"type": "oauth2",
+					"oauth2": [
+						{
+							"key": "grant_type",
+							"value": "client_credentials",
+							"type": "string"
+						},
+						{
+							"key": "accessTokenUrl",
+							"value": "https://auth.example.com/oauth/token",
+							"type": "string"
+						},
+						{
+							"key": "clientId",
+							"value": "batch-reporter",
+							"type": "string"
+						},
+						{
+							"key": "clientSecret",
+							"value": "oauth-client-secret-literal-3318",
+							"type": "string"
+						},
+						{
+							"key": "scope",
+							"value": "reports.read",
+							"type": "string"
+						},
+						{
+							"key": "client_authentication",
+							"value": "header",
+							"type": "string"
+						},
+						{
+							"key": "addTokenTo",
+							"value": "header",
+							"type": "string"
+						},
+						{
+							"key": "accessToken",
+							"value": "{{reportsToken}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.example.com/v1/reports",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"reports"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

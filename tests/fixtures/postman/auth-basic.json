@@ -1,0 +1,46 @@
+{
+	"info": {
+		"_postman_id": "e90a3c3d-539c-448e-a5fe-142ce7ff7666",
+		"name": "Auth basic",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Basic protected",
+			"request": {
+				"auth": {
+					"type": "basic",
+					"basic": [
+						{
+							"key": "username",
+							"value": "svc-reporting",
+							"type": "string"
+						},
+						{
+							"key": "password",
+							"value": "basic-pass-literal-91",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.example.com/v1/me",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"me"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

@@ -1,0 +1,105 @@
+{
+	"info": {
+		"name": "Legacy v2.0 collection",
+		"_postman_id": "7a204af0-1517-4bf2-a95d-7b78bf8d3e61",
+		"description": "Exported with Postman 4.x",
+		"schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Plain URL shorthand",
+			"request": "https://api.example.com/v2/ping",
+			"response": []
+		},
+		{
+			"name": "Header string and object auth",
+			"request": {
+				"url": "https://api.example.com/v2/items?limit=10&offset=0",
+				"method": "POST",
+				"header": "Content-Type: application/json\nX-Legacy: yes",
+				"body": {
+					"mode": "raw",
+					"raw": "{\"a\":1}"
+				},
+				"auth": {
+					"type": "bearer",
+					"bearer": {
+						"token": "legacy-v2-bearer-literal"
+					}
+				},
+				"description": "v2.0 style request"
+			},
+			"response": []
+		},
+		{
+			"name": "Folder with basic auth",
+			"description": "A v2.0 folder",
+			"item": [
+				{
+					"name": "Uses folder auth",
+					"request": {
+						"url": {
+							"raw": "https://api.example.com/v2/secure",
+							"protocol": "https",
+							"host": [
+								"api",
+								"example",
+								"com"
+							],
+							"path": [
+								"v2",
+								"secure"
+							]
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "*/*"
+							}
+						]
+					},
+					"response": []
+				},
+				{
+					"name": "API key (object form)",
+					"request": {
+						"url": "https://api.example.com/v2/keyed",
+						"method": "GET",
+						"auth": {
+							"type": "apikey",
+							"apikey": {
+								"key": "X-Key",
+								"value": "{{legacyKey}}",
+								"in": "header"
+							}
+						}
+					},
+					"response": []
+				}
+			],
+			"auth": {
+				"type": "basic",
+				"basic": {
+					"username": "legacy",
+					"password": "{{legacyPassword}}"
+				}
+			}
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": {
+			"token": "{{legacyToken}}"
+		}
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": "console.log(\"legacy exec as string\");"
+			}
+		}
+	]
+}

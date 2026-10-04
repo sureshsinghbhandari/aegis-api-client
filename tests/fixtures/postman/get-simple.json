@@ -1,0 +1,32 @@
+{
+	"info": {
+		"_postman_id": "51a89c63-6990-4a84-a235-4b355452c443",
+		"name": "Get simple",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Get status",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.example.com/v1/status",
+					"protocol": "https",
+					"host": [
+						"api",
+						"example",
+						"com"
+					],
+					"path": [
+						"v1",
+						"status"
+					]
+				},
+				"description": "Returns the service status."
+			},
+			"response": []
+		}
+	]
+}

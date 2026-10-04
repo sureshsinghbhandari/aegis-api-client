@@ -1,0 +1,94 @@
+{
+	"info": {
+		"_postman_id": "c3ef64c9-e0c8-42eb-a3f6-076adef89fba",
+		"name": "Traversal paths",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "29184071"
+	},
+	"item": [
+		{
+			"name": "Upload with hostile paths",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "a",
+							"type": "file",
+							"src": "../../etc/passwd"
+						},
+						{
+							"key": "b",
+							"type": "file",
+							"src": "C:\\Windows\\win.ini"
+						},
+						{
+							"key": "c",
+							"type": "file",
+							"src": "\\\\server\\share\\f"
+						},
+						{
+							"key": "d",
+							"type": "file",
+							"src": "/etc/shadow"
+						},
+						{
+							"key": "e",
+							"type": "file",
+							"src": "files/ok.txt"
+						},
+						{
+							"key": "f",
+							"type": "file",
+							"src": [
+								"files/first.txt",
+								"files/second.txt"
+							]
+						}
+					]
+				},
+				"url": {
+					"raw": "https://upload.example.com/files",
+					"protocol": "https",
+					"host": [
+						"upload",
+						"example",
+						"com"
+					],
+					"path": [
+						"files"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Binary with traversal",
+			"request": {
+				"method": "PUT",
+				"header": [],
+				"body": {
+					"mode": "file",
+					"file": {
+						"src": "..\\..\\boot.ini"
+					}
+				},
+				"url": {
+					"raw": "https://upload.example.com/raw",
+					"protocol": "https",
+					"host": [
+						"upload",
+						"example",
+						"com"
+					],
+					"path": [
+						"raw"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

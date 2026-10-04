@@ -1,0 +1,11 @@
+{
+	"item": [
+		{
+			"name": "Orphan",
+			"request": {
+				"method": "GET",
+				"url": "https://example.com"
+			}
+		}
+	]
+}
