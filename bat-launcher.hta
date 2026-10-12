@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<title>Aegis API Client - bat launcher</title>
+<hta:application id="launcherApp" applicationname="AegisApiClientBatLauncher" caption="yes" border="thick" sysmenu="yes" minimizebutton="yes" maximizebutton="yes" scroll="auto" showintaskbar="yes" contextmenu="no" navigable="no" windowstate="normal" />
+<!--
+  Aegis API Client launcher.
+
+  Double-click this file (it must stay in the repo root, next to start-aegis.bat).
+  Each button runs start-aegis.bat or an npm script in its own console window.
+  One click runs it - there is no confirmation. Any other .bat file in the repo
+  root is listed under "Other scripts" (press rescan).
+
+  Why .hta and not .html: a web page opened in a browser cannot start programs
+  on your PC. An .hta is the same HTML, but Windows runs it as an application
+  (mshta.exe), so its script may start the .bat files. It opens no network port,
+  so nothing else - another web page, another PC - can trigger the buttons.
+
+  Plain ASCII only. Script is JScript (IE11 mode): no arrow functions, let or const.
+-->
+<style type="text/css">
+html, body { margin: 0; padding: 0; background: #eef1f4; color: #1d2733; font-family: "Segoe UI", Tahoma, Arial, sans-serif; font-size: 13px; }
+#top { background: #17212b; color: #ffffff; padding: 14px 18px 12px 18px; }
+#top h1 { margin: 0 0 4px 0; font-size: 20px; font-weight: 600; }
+#dir { color: #a9b8c6; font-size: 12px; }
+#dir a { color: #8cc4ff; }
+#hint { color: #a9b8c6; font-size: 12px; margin-top: 8px; }
+#wrap { padding: 2px 14px 4px 14px; }
+h2.grp { font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; color: #52606d; margin: 16px 4px 8px 4px; }
+.tile { display: inline-block; vertical-align: top; width: 48.4%; margin: 0 0.8% 12px 0.8%; box-sizing: border-box; background: #ffffff; border: 1px solid #d5dbe1; border-radius: 6px; padding: 10px 12px 10px 12px; }
+.tile button { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 4px; color: #ffffff; font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer; }
+.tile button.safe { background: #2e7d4f; }
+.tile button.caution { background: #b7791f; }
+.tile button.info { background: #2b6cb0; }
+.tile button:disabled { background: #9aa5b1; cursor: default; }
+.desc { margin: 8px 0 5px 0; color: #3e4c59; line-height: 1.4; }
+.file { color: #7b8794; font-family: Consolas, "Courier New", monospace; font-size: 11px; }
+.err { margin: 18px 6px; padding: 12px; background: #fdecea; border: 1px solid #f5b5ae; border-radius: 6px; color: #7a1f16; }
+#logbox { margin: 12px 14px 0 14px; background: #ffffff; border: 1px solid #d5dbe1; border-radius: 6px; padding: 8px 12px; }
+.logtitle { font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; color: #52606d; margin-bottom: 4px; }
+#log { font-family: Consolas, "Courier New", monospace; font-size: 12px; max-height: 66px; overflow: auto; white-space: pre-wrap; color: #1d2733; }
+</style>
+</head>
+<body>
+<div id="top">
+  <h1>Aegis API Client &mdash; launcher</h1>
+  <div id="dir"></div>
+  <div id="hint">A click runs the command at once - nothing asks first. Each command opens in its own console window. The launch buttons close their window when the app has started; the others stay open so you can read the result.</div>
+</div>
+<div id="logbox"><div class="logtitle">Recent</div><div id="log"></div></div>
+<div id="wrap"><div id="groups"></div></div>
+
+<script language="JScript">
+var SH = null;
+var FSO = null;
+var REPO = '';
+var ITEMS = [];
+var LOGLINES = [];
+
+var GROUPS = [
+  { id: 'app',   title: 'App' },
+  { id: 'check', title: 'Build and test' },
+  { id: 'other', title: 'Other scripts' }
+];
+
+// kind 'bat'  : run a .bat in the repo root (file + optional args).
+// kind 'npm'  : run a command line (cmd) in the repo root.
+// keep: true  : keep the console window open afterwards (cmd /k); otherwise it closes when done (cmd /c).
+// tone: safe (green) / caution (amber) / info (blue).
+var ACTIONS = [
+  { group: 'app', tone: 'safe', kind: 'bat', file: 'start-aegis.bat', args: '', keep: false, label: 'Launch Aegis',
+    desc: 'Installs dependencies on the first run, builds only if the build is missing, then opens the desktop app.' },
+  { group: 'app', tone: 'caution', kind: 'bat', file: 'start-aegis.bat', args: 'rebuild', keep: false, label: 'Rebuild and launch',
+    desc: 'Forces a clean npm run build first (use after pulling new code), then opens the desktop app.' },
+  { group: 'app', tone: 'info', kind: 'bat', file: 'start-aegis.bat', args: 'dev', keep: true, label: 'Dev mode (hot reload)',
+    desc: 'Vite dev server plus Electron with hot reload. Close the console window to stop it.' },
+  { group: 'app', tone: 'info', kind: 'npm', cmd: 'npm install', keep: true, label: 'Install dependencies',
+    desc: 'Runs npm install. Use it after package.json changes.' },
+
+  { group: 'check', tone: 'safe', kind: 'npm', cmd: 'npm run build', keep: true, label: 'Build only',
+    desc: 'Builds the main process, preload, renderer and the CLI into dist. Nothing is started.' },
+  { group: 'check', tone: 'safe', kind: 'npm', cmd: 'npm run verify', keep: true, label: 'Verify (lint + types + tests)',
+    desc: 'ESLint, TypeScript and every Vitest suite. Run it before a commit.' },
+  { group: 'check', tone: 'safe', kind: 'npm', cmd: 'npm run test:e2e', keep: true, label: 'End-to-end tests',
+    desc: 'Builds, then drives the real Electron app with Playwright.' },
+  { group: 'check', tone: 'safe', kind: 'npm', cmd: 'npm audit', keep: true, label: 'Dependency audit',
+    desc: 'Runs npm audit and lists known vulnerable dependencies.' }
+];
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+function nowText() {
+  var d = new Date();
+  return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+}
+
+// Folder this launcher sits in, from its own address.
+function repoDir() {
+  var h = String(location.href);
+  var p;
+  if (/^file:\/\/\//i.test(h)) p = h.replace(/^file:\/\/\//i, '');
+  else if (/^file:\/\//i.test(h)) p = '//' + h.replace(/^file:\/\//i, '');
+  else p = h;
+  p = decodeURIComponent(p.split('#')[0].split('?')[0]).replace(/\//g, '\\');
+  return p.substring(0, p.lastIndexOf('\\'));
+}
+
+// Root .bat files that no button above runs.
+function otherBats() {
+  var used = {};
+  var out = [];
+  var i;
+  for (i = 0; i < ACTIONS.length; i++) {
+    if (ACTIONS[i].kind === 'bat') used[ACTIONS[i].file.toLowerCase()] = true;
+  }
+  var en = new Enumerator(FSO.GetFolder(REPO).Files);
+  for (; !en.atEnd(); en.moveNext()) {
+    var n = en.item().Name;
+    if (/\.bat$/i.test(n) && !used[n.toLowerCase()]) out.push(n);
+  }
+  out.sort(function (a, b) {
+    a = a.toLowerCase();
+    b = b.toLowerCase();
+    return a < b ? -1 : (a > b ? 1 : 0);
+  });
+  return out;
+}
+
+function tileHtml(idx, it) {
+  var shown = it.kind === 'bat' ? (it.file + (it.args ? ' ' + it.args : '')) : it.cmd;
+  return '<div class="tile"><button id="b' + idx + '" class="' + it.tone + '" onclick="onRun(' + idx + ')">' + esc(it.label) + '</button>' +
+         '<div class="desc">' + esc(it.desc) + '</div><div class="file">' + esc(shown) + '</div></div>';
+}
+
+function render() {
+  var buckets = {};
+  var g, i;
+  ITEMS = [];
+  for (g = 0; g < GROUPS.length; g++) buckets[GROUPS[g].id] = [];
+  for (i = 0; i < ACTIONS.length; i++) buckets[ACTIONS[i].group].push(ACTIONS[i]);
+  var others = otherBats();
+  for (i = 0; i < others.length; i++) {
+    buckets.other.push({ group: 'other', tone: 'caution', kind: 'bat', file: others[i], args: '', keep: true,
+                         label: others[i].replace(/\.bat$/i, ''), desc: 'Runs ' + others[i] + ' in a new console window.' });
+  }
+  var html = '';
+  for (g = 0; g < GROUPS.length; g++) {
+    var list = buckets[GROUPS[g].id];
+    if (list.length === 0) continue;
+    html += '<h2 class="grp">' + esc(GROUPS[g].title) + '</h2><div class="tiles">';
+    for (i = 0; i < list.length; i++) {
+      ITEMS.push(list[i]);
+      html += tileHtml(ITEMS.length - 1, list[i]);
+    }
+    html += '</div>';
+  }
+  document.getElementById('groups').innerHTML = html;
+}
+
+function logLine(text) {
+  LOGLINES.unshift(nowText() + '  ' + text);
+  if (LOGLINES.length > 14) LOGLINES.length = 14;
+  document.getElementById('log').textContent = LOGLINES.join('\n');
+}
+
+// Double-clicking an .hta starts the 32-bit mshta, and a plain "cmd.exe" from there
+// is the 32-bit one. Sysnative (visible to 32-bit programs only) is the real 64-bit
+// cmd.exe, so each command runs exactly as it does in a normal console.
+function cmdExe() {
+  var native = SH.ExpandEnvironmentStrings('%windir%') + '\\Sysnative\\cmd.exe';
+  return FSO.FileExists(native) ? native : 'cmd.exe';
+}
+
+function launch(it) {
+  var sw = it.keep ? '/k' : '/c';
+  SH.CurrentDirectory = REPO;
+  if (it.kind === 'bat') {
+    // The doubled outer quotes are the form cmd strips, so a path with spaces still works.
+    SH.Run('"' + cmdExe() + '" ' + sw + ' ""' + REPO + '\\' + it.file + '"' + (it.args ? ' ' + it.args : '') + '"', 1, false);
+  } else {
+    SH.Run('"' + cmdExe() + '" ' + sw + ' "' + it.cmd + '"', 1, false);
+  }
+}
+
+function onRun(idx) {
+  var it = ITEMS[idx];
+  var btn = document.getElementById('b' + idx);
+  try {
+    launch(it);
+    logLine('Started: ' + (it.kind === 'bat' ? it.file + (it.args ? ' ' + it.args : '') : it.cmd));
+  } catch (e) {
+    logLine('COULD NOT START ' + it.label + ': ' + e.message);
+  }
+  btn.disabled = true;
+  window.setTimeout(function () { btn.disabled = false; }, 3000);
+}
+
+function rescan() {
+  render();
+  logLine('Rescanned: ' + ITEMS.length + ' commands');
+}
+
+function sizeWindow() {
+  try {
+    var w = Math.min(920, screen.availWidth - 40);
+    var h = Math.min(760, screen.availHeight - 40);
+    window.resizeTo(w, h);
+    window.moveTo(Math.max(0, Math.round((screen.availWidth - w) / 2)), Math.max(0, Math.round((screen.availHeight - h) / 2)));
+  } catch (e) { }
+}
+
+function init() {
+  try {
+    SH = new ActiveXObject('WScript.Shell');
+    FSO = new ActiveXObject('Scripting.FileSystemObject');
+    REPO = repoDir();
+    document.getElementById('dir').innerHTML = 'Runs commands in <b>' + esc(REPO) + '</b> &nbsp; <a href="#" onclick="rescan(); return false;">rescan</a>';
+    if (!FSO.FileExists(REPO + '\\start-aegis.bat')) {
+      document.getElementById('groups').innerHTML = '<div class="err">start-aegis.bat was not found in ' + esc(REPO) + '. Keep bat-launcher.hta in the repo root.</div>';
+      return;
+    }
+    render();
+    sizeWindow();
+    logLine('Ready: ' + ITEMS.length + ' commands');
+  } catch (e) {
+    document.getElementById('groups').innerHTML = '<div class="err">Could not start the launcher: ' + esc(e.message) + '</div>';
+  }
+}
+
+window.onload = init;
+</script>
+</body>
+</html>
