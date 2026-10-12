@@ -10,4 +10,5 @@ const run = (cmd, args) => {
 
 run('npx', ['vite', 'build', '--config', 'apps/desktop/renderer/vite.config.ts']);
 run('node', ['scripts/build-main.mjs']);
+run('node', ['scripts/build-cli.mjs']);
 console.log('build complete -> dist/');

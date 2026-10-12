@@ -24,6 +24,20 @@ export interface AuthContext {
   /** Wall clock in epoch milliseconds (injectable for tests). */
   now(): number;
   send(request: AuthHttpRequest): Promise<AuthHttpResponse>;
+  /**
+   * Challenge round trip for challenge/response schemes (Digest, ...): sends the
+   * request exactly as prepared but WITHOUT authentication and returns the
+   * status and headers of that response (e.g. a 401 with `WWW-Authenticate`).
+   * The response body is discarded. Same policy/TLS/proxy/cookie handling as
+   * the real request. Optional: absent in contexts without a request (token tools).
+   */
+  challenge?(): Promise<AuthChallengeResponse>;
+}
+
+/** Result of {@link AuthContext.challenge}. */
+export interface AuthChallengeResponse {
+  status: number;
+  headers: HeaderPair[];
 }
 
 export interface AuthResult {

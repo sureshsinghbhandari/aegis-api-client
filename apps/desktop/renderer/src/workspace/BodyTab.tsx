@@ -1,11 +1,15 @@
 import type { BodyMode, RawLanguage, RequestBody } from '@aegis/core';
+import { useState } from 'react';
+import { BulkEditToggle, BulkTextEditor, formBulk } from '../components/BulkEditor';
 import { Button } from '../components/ui';
 import { CodeEditor } from '../components/CodeEditor';
 import { KeyValueTable } from '../components/ui';
 import { api, errorMessage } from '../lib/api';
+import { parseBulk, serializeBulk } from '../lib/bulk-edit';
 import { formatHtml, formatJson, formatXml } from '../lib/format';
 import { useApp, type OpenTab } from '../store/app';
 import { FormDataTable, fileLabel } from './FormDataTable';
+import { EMPTY_GRAPHQL, GraphQLBody } from './GraphQLBody';
 import { useDraftUpdate } from './useDraft';
 
 const MODES: Array<{ id: BodyMode; label: string }> = [
@@ -14,6 +18,7 @@ const MODES: Array<{ id: BodyMode; label: string }> = [
   { id: 'urlencoded', label: 'x-www-form-urlencoded' },
   { id: 'formdata', label: 'form-data' },
   { id: 'binary', label: 'binary' },
+  { id: 'graphql', label: 'GraphQL' },
 ];
 
 const LANGUAGES: Array<{ id: RawLanguage; label: string; monaco: string }> = [
@@ -29,6 +34,8 @@ export function BodyTab({ tab }: { tab: OpenTab }) {
   const { body } = tab.draft;
   const set = (patch: Partial<RequestBody>) => update({ body: { ...body, ...patch } });
   const language = body.rawLanguage ?? 'json';
+  const [bulkUrlencoded, setBulkUrlencoded] = useState(false);
+  const [bulkForm, setBulkForm] = useState(false);
 
   const beautify = () => {
     const raw = body.raw ?? '';
@@ -46,12 +53,19 @@ export function BodyTab({ tab }: { tab: OpenTab }) {
     }
   };
 
+  const switchMode = (mode: BodyMode) => {
+    const patch: Partial<RequestBody> = { mode };
+    if (mode === 'raw' && !body.rawLanguage) patch.rawLanguage = 'json';
+    if (mode === 'graphql' && !body.graphql) patch.graphql = EMPTY_GRAPHQL;
+    set(patch);
+  };
+
   return (
     <div className="wb-body">
       <div className="wb-modes" role="radiogroup" aria-label="Body type">
         {MODES.map((m) => (
           <label key={m.id} className={`wb-mode ${body.mode === m.id ? 'active' : ''}`}>
-            <input type="radio" name={`body-mode-${tab.tabId}`} checked={body.mode === m.id} onChange={() => set({ mode: m.id, ...(m.id === 'raw' && !body.rawLanguage ? { rawLanguage: 'json' as const } : {}) })} />
+            <input type="radio" name={`body-mode-${tab.tabId}`} checked={body.mode === m.id} onChange={() => switchMode(m.id)} />
             {m.label}
           </label>
         ))}
@@ -76,19 +90,34 @@ export function BodyTab({ tab }: { tab: OpenTab }) {
 
       {body.mode === 'raw' && (
         <div className="wb-editor-host">
-          <CodeEditor value={body.raw ?? ''} language={LANGUAGES.find((l) => l.id === language)?.monaco ?? 'plaintext'} onChange={(raw) => set({ raw })} />
+          <CodeEditor value={body.raw ?? ''} language={LANGUAGES.find((l) => l.id === language)?.monaco ?? 'plaintext'} variableHints onChange={(raw) => set({ raw })} />
         </div>
       )}
 
+      {body.mode === 'graphql' && <GraphQLBody value={body.graphql ?? EMPTY_GRAPHQL} onChange={(graphql) => set({ graphql })} />}
+
       {body.mode === 'urlencoded' && (
         <div className="wb-pane-scroll">
-          <KeyValueTable rows={body.urlencoded ?? []} onChange={(urlencoded) => set({ urlencoded })} />
+          <BulkEditToggle bulk={bulkUrlencoded} onChange={setBulkUrlencoded} />
+          {bulkUrlencoded ? (
+            <BulkTextEditor rows={body.urlencoded ?? []} onChange={(urlencoded) => set({ urlencoded })} serialize={serializeBulk} parse={parseBulk} label="Form fields (bulk edit)" />
+          ) : (
+            <KeyValueTable rows={body.urlencoded ?? []} onChange={(urlencoded) => set({ urlencoded })} variableHints />
+          )}
         </div>
       )}
 
       {body.mode === 'formdata' && (
         <div className="wb-pane-scroll">
-          <FormDataTable rows={body.formData ?? []} onChange={(formData) => set({ formData })} />
+          <BulkEditToggle bulk={bulkForm} onChange={setBulkForm} />
+          {bulkForm ? (
+            <>
+              <BulkTextEditor rows={body.formData ?? []} onChange={(formData) => set({ formData })} serialize={formBulk.serialize} parse={formBulk.parse} label="Form data (bulk edit)" />
+              <p className="wb-hint">File rows keep their file as long as the line is unchanged; files cannot be chosen in text mode.</p>
+            </>
+          ) : (
+            <FormDataTable rows={body.formData ?? []} onChange={(formData) => set({ formData })} />
+          )}
         </div>
       )}
 
@@ -113,7 +142,7 @@ export function BodyTab({ tab }: { tab: OpenTab }) {
             <span className="wb-dim">Content-Type override</span>
             <input
               value={body.contentType ?? ''}
-              placeholder="automatic"
+              placeholder={body.mode === 'graphql' ? 'application/json' : 'automatic'}
               spellCheck={false}
               aria-label="Content-Type override"
               onChange={(e) => {

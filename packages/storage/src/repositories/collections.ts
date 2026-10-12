@@ -6,7 +6,10 @@ import {
   type AuthConfig,
   type Collection,
   type CollectionBundle,
+  type FindReplaceResult,
+  type FindReplaceScope,
   type Folder,
+  type FolderNode,
   type ImportProgress,
   type ImportStats,
   type ItemNode,
@@ -14,7 +17,9 @@ import {
   type RequestDraft,
   type RequestModel,
   type ScriptEntry,
+  type VariableEntry,
 } from '@aegis/core';
+import { isSecretRef } from '@aegis/security';
 import type { DbHandle } from '../database';
 import {
   collections,
@@ -77,6 +82,80 @@ export interface FolderInput {
 export interface InsertBundleResult {
   collectionId: string;
   stats: ImportStats;
+}
+
+/** Text substitution used by find & replace. Built by the application layer (literal or regular expression). */
+export interface TextReplacer {
+  /** Number of matches in `text`. */
+  count(text: string): number;
+  /** `text` with every match replaced. */
+  apply(text: string): string;
+  /** Offset of the first match (for excerpts); -1 when there is none. */
+  firstIndex(text: string): number;
+}
+
+export interface FindReplaceOptions {
+  scopes: readonly FindReplaceScope[];
+  replacer: TextReplacer;
+  /** `false` = count only, write nothing. */
+  apply: boolean;
+  /** Receives one before/after excerpt per matched field until `maxSamples` is reached (default 25). */
+  maxSamples?: number;
+}
+
+/** Characters of context kept on each side of the first match in a sample. */
+const SAMPLE_CONTEXT = 60;
+
+export function emptyFindReplaceResult(apply: boolean): FindReplaceResult {
+  return {
+    matches: 0,
+    requests: 0,
+    folders: 0,
+    variables: 0,
+    collection: false,
+    collections: 0,
+    byScope: { url: 0, params: 0, headers: 0, body: 0, scripts: 0, descriptions: 0, variables: 0 },
+    samples: [],
+    summary: '0 matches',
+    applied: apply,
+  };
+}
+
+/** `12 matches in 4 requests, 1 folder and 2 variables`. */
+export function summarizeFindReplace(r: Pick<FindReplaceResult, 'matches' | 'requests' | 'folders' | 'variables' | 'collection' | 'collections'>): string {
+  const n = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+  if (r.matches === 0) return '0 matches';
+  const parts: string[] = [];
+  if (r.requests) parts.push(n(r.requests, 'request'));
+  if (r.folders) parts.push(n(r.folders, 'folder'));
+  if (r.variables) parts.push(n(r.variables, 'variable'));
+  if (r.collection) parts.push(r.collections > 1 ? `${r.collections} collection descriptions/scripts` : 'the collection description/scripts');
+  const where = parts.length === 0 ? '' : parts.length === 1 ? ` in ${parts[0]}` : ` in ${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `${n(r.matches, 'match', 'matches')}${where}`;
+}
+
+/** Merge per-collection results (workspace-wide run). */
+export function mergeFindReplaceResults(results: readonly FindReplaceResult[], apply: boolean, maxSamples = 25): FindReplaceResult {
+  const out = emptyFindReplaceResult(apply);
+  for (const r of results) {
+    out.matches += r.matches;
+    out.requests += r.requests;
+    out.folders += r.folders;
+    out.variables += r.variables;
+    out.collection = out.collection || r.collection;
+    out.collections += r.matches > 0 ? 1 : 0;
+    for (const k of Object.keys(out.byScope) as FindReplaceScope[]) out.byScope[k] += r.byScope[k];
+    for (const s of r.samples) if (out.samples.length < maxSamples) out.samples.push(s);
+  }
+  out.summary = summarizeFindReplace(out);
+  return out;
+}
+
+function excerpt(text: string, at: number, length: number): string {
+  const start = Math.max(0, at - SAMPLE_CONTEXT);
+  const end = Math.min(text.length, at + Math.max(length, 1) + SAMPLE_CONTEXT);
+  const middle = text.slice(start, end).replace(/\s+/g, ' ');
+  return `${start > 0 ? '…' : ''}${middle}${end < text.length ? '…' : ''}`;
 }
 
 const KV_TABLES = [requestHeaders, requestQueryParams, requestPathVariables] as const;
@@ -382,7 +461,9 @@ export class CollectionRepository {
         body: b
           ? {
               mode: b.mode as RequestDraft['body']['mode'],
-              ...(b.rawContent !== null ? { raw: b.rawContent } : {}),
+              // GraphQL bodies store `{query, variables, operationName}` JSON in raw_content (no schema change needed).
+              ...(b.rawContent !== null && b.mode !== 'graphql' ? { raw: b.rawContent } : {}),
+              ...(b.mode === 'graphql' ? { graphql: parseJson(b.rawContent ?? '', { query: '', variables: '' }) } : {}),
               ...(b.rawLanguage ? { rawLanguage: b.rawLanguage as NonNullable<RequestDraft['body']['rawLanguage']> } : {}),
               ...(b.contentType ? { contentType: b.contentType } : {}),
               ...(b.filePath ? { filePath: b.filePath } : {}),
@@ -445,7 +526,7 @@ export class CollectionRepository {
           id: newId(),
           requestId,
           mode: b.mode,
-          rawContent: b.raw ?? null,
+          rawContent: b.mode === 'graphql' ? toJson(b.graphql ?? { query: '', variables: '' }) : (b.raw ?? null),
           rawLanguage: b.rawLanguage ?? null,
           contentType: b.contentType ?? null,
           filePath: b.filePath ?? null,
@@ -586,7 +667,7 @@ export class CollectionRepository {
     const collectionId = item.collectionId;
     if (targetParentId) {
       const target = this.requireFolder(targetParentId);
-      if (target.collectionId !== collectionId) throw new AppError('VALIDATION_FAILED', 'Cannot move between collections here.');
+      if (target.collectionId !== collectionId) throw new AppError('VALIDATION_FAILED', 'Cannot move between collections here. Use moveToCollection.');
       if (kind === 'folder' && this.descendantFolderIds(id).includes(targetParentId)) {
         throw new AppError('VALIDATION_FAILED', 'A folder cannot be moved into itself or its descendants.');
       }
@@ -604,7 +685,233 @@ export class CollectionRepository {
     });
   }
 
+  /**
+   * Move a folder (with its whole subtree) or a request into `targetCollectionId`, under
+   * `targetParentId` (null = root) at `index`. Folder variables, scripts and vaulted auth
+   * travel with their owner because they are keyed by folder/request id, not by collection.
+   * Call inside a transaction.
+   */
+  moveToCollection(kind: 'folder' | 'request', id: string, targetCollectionId: string, targetParentId: string | null, index: number): void {
+    this.requireCollection(targetCollectionId);
+    const item = kind === 'folder' ? this.requireFolder(id) : this.requireRequest(id);
+    if (item.collectionId === targetCollectionId) {
+      this.move(kind, id, targetParentId, index);
+      return;
+    }
+    if (targetParentId) {
+      const target = this.requireFolder(targetParentId);
+      if (target.collectionId !== targetCollectionId) throw new AppError('VALIDATION_FAILED', 'The target folder belongs to a different collection.');
+      if (kind === 'folder' && this.descendantFolderIds(id).includes(targetParentId)) {
+        throw new AppError('VALIDATION_FAILED', 'A folder cannot be moved into itself or its descendants.');
+      }
+    }
+    const ts = this.now();
+    if (kind === 'folder') {
+      for (const part of chunk(this.descendantFolderIds(id))) {
+        this.db.update(folders).set({ collectionId: targetCollectionId, updatedAt: ts }).where(inArray(folders.id, part)).run();
+        this.db.update(requests).set({ collectionId: targetCollectionId, updatedAt: ts }).where(inArray(requests.folderId, part)).run();
+      }
+      this.db.update(folders).set({ parentFolderId: targetParentId }).where(eq(folders.id, id)).run();
+    } else {
+      this.db.update(requests).set({ collectionId: targetCollectionId, folderId: targetParentId, updatedAt: ts }).where(eq(requests.id, id)).run();
+    }
+    // Re-number the siblings in the new parent.
+    this.move(kind, id, targetParentId, index);
+  }
+
+  // ------------------------------------------------------------- find & replace
+
+  /**
+   * Find & replace across one collection. Secret references (`secretref:`) and secret variables are
+   * never read or written; auth parameters are out of scope by design. Call inside a transaction
+   * when `apply` is true so a failure halfway rolls everything back.
+   */
+  findReplace(collectionId: string, options: FindReplaceOptions): FindReplaceResult {
+    const collection = this.requireCollection(collectionId);
+    const scopes = new Set(options.scopes);
+    const { replacer, apply } = options;
+    const maxSamples = options.maxSamples ?? 25;
+    const result = emptyFindReplaceResult(apply);
+
+    let entityMatches = 0;
+    /**
+     * Substitute inside one field. Empty strings and `secretref:` values are left untouched and never
+     * counted; the replaced text is always computed (it is pure) so the preview can show an excerpt.
+     */
+    const tx = (text: string, scope: FindReplaceScope, location: string): string => {
+      if (text === '' || isSecretRef(text)) return text;
+      const n = replacer.count(text);
+      if (n === 0) return text;
+      entityMatches += n;
+      result.byScope[scope] += n;
+      const replaced = replacer.apply(text);
+      if (result.samples.length < maxSamples) {
+        const at = Math.max(0, replacer.firstIndex(text));
+        result.samples.push({ location, before: excerpt(text, at, 1), after: excerpt(replaced, at, 1) });
+      }
+      return apply ? replaced : text;
+    };
+    const kv = (list: readonly KeyValueEntry[], scope: FindReplaceScope, location: string): KeyValueEntry[] =>
+      list.map((e) => ({
+        ...e,
+        key: tx(e.key, scope, `${location} › ${e.key || '(empty key)'}`),
+        value: tx(e.value, scope, `${location} › ${e.key || '(empty key)'}`),
+        ...(e.description !== undefined && scopes.has('descriptions') ? { description: tx(e.description, 'descriptions', `${location} › ${e.key} description`) } : {}),
+      }));
+    const scripts = (list: readonly ScriptEntry[], location: string): ScriptEntry[] =>
+      list.map((s) => ({ ...s, source: tx(s.source, 'scripts', `${location} › ${s.type === 'prerequest' ? 'pre-request script' : 'tests'}`) }));
+    const variables = (ownerId: string, location: string, store: { list(id: string, mode: SecretMode): VariableEntry[]; replaceAll(id: string, entries: readonly VariableEntry[]): VariableEntry[] }): void => {
+      if (!scopes.has('variables')) return;
+      const entries = store.list(ownerId, 'refs');
+      let touched = 0;
+      const next = entries.map((v) => {
+        // Secret variables are never read, counted or written.
+        if (v.isSecret) return v;
+        const before = entityMatches;
+        const out: VariableEntry = { ...v, initialValue: tx(v.initialValue, 'variables', `${location} › variable ${v.key}`) };
+        if (v.currentValue !== undefined) out.currentValue = tx(v.currentValue, 'variables', `${location} › variable ${v.key} (current)`);
+        if (entityMatches > before) touched += 1;
+        return out;
+      });
+      if (touched > 0) {
+        result.variables += touched;
+        if (apply) store.replaceAll(ownerId, next);
+      }
+    };
+
+    // Collection level
+    const colLoc = `Collection "${collection.name}"`;
+    entityMatches = 0;
+    const colPatch: Partial<Pick<Collection, 'description' | 'scripts'>> = {};
+    if (scopes.has('descriptions')) colPatch.description = tx(collection.description, 'descriptions', `${colLoc} › description`);
+    if (scopes.has('scripts')) colPatch.scripts = scripts(collection.scripts, colLoc);
+    if (entityMatches > 0) {
+      result.matches += entityMatches;
+      result.collection = true;
+      if (apply) this.updateCollection(collectionId, colPatch);
+    }
+    entityMatches = 0;
+    variables(collectionId, colLoc, this.vars.collection);
+    result.matches += entityMatches;
+
+    // Folders
+    for (const folder of this.listFolders(collectionId, 'refs')) {
+      const loc = `Folder "${folder.name}"`;
+      entityMatches = 0;
+      const patch: Partial<Pick<Folder, 'description' | 'scripts'>> = {};
+      if (scopes.has('descriptions')) patch.description = tx(folder.description, 'descriptions', `${loc} › description`);
+      if (scopes.has('scripts')) patch.scripts = scripts(folder.scripts, loc);
+      if (entityMatches > 0) {
+        result.matches += entityMatches;
+        result.folders += 1;
+        if (apply) this.updateFolder(folder.id, patch);
+      }
+      entityMatches = 0;
+      variables(folder.id, loc, this.vars.folder);
+      result.matches += entityMatches;
+    }
+
+    // Requests. Auth is carried over untouched (credentials are never part of a replace).
+    for (const req of this.listRequests(collectionId, 'refs')) {
+      const loc = `Request "${req.name}"`;
+      entityMatches = 0;
+      const { id, collectionId: _c, folderId: _f, sortOrder: _s, createdAt: _ca, updatedAt: _ua, ...draft } = req;
+      const next: RequestDraft = { ...draft };
+      if (scopes.has('url')) next.url = tx(req.url, 'url', `${loc} › url`);
+      if (scopes.has('params')) {
+        next.queryParams = kv(req.queryParams, 'params', `${loc} › query`);
+        next.pathVariables = kv(req.pathVariables, 'params', `${loc} › path variable`);
+      }
+      if (scopes.has('headers')) next.headers = kv(req.headers, 'headers', `${loc} › header`);
+      if (scopes.has('body')) {
+        next.body = {
+          ...req.body,
+          ...(req.body.raw !== undefined ? { raw: tx(req.body.raw, 'body', `${loc} › body`) } : {}),
+          ...(req.body.graphql ? { graphql: { ...req.body.graphql, query: tx(req.body.graphql.query, 'body', `${loc} › GraphQL query`), variables: tx(req.body.graphql.variables, 'body', `${loc} › GraphQL variables`) } } : {}),
+          ...(req.body.urlencoded ? { urlencoded: kv(req.body.urlencoded, 'body', `${loc} › form field`) } : {}),
+          ...(req.body.formData
+            ? { formData: req.body.formData.map((f) => (f.type === 'file' ? f : { ...f, key: tx(f.key, 'body', `${loc} › form field ${f.key}`), value: tx(f.value, 'body', `${loc} › form field ${f.key}`) })) }
+            : {}),
+        };
+      }
+      if (scopes.has('scripts')) next.scripts = scripts(req.scripts, loc);
+      if (scopes.has('descriptions')) next.description = tx(req.description, 'descriptions', `${loc} › description`);
+      if (entityMatches > 0) {
+        result.matches += entityMatches;
+        result.requests += 1;
+        if (apply) this.updateRequest(id, next);
+      }
+    }
+    result.collections = result.matches > 0 ? 1 : 0;
+    result.summary = summarizeFindReplace(result);
+    return result;
+  }
+
   // -------------------------------------------------------------------- bundles
+
+  /** A folder and everything below it as a portable node (ids stripped). */
+  loadFolderNode(folderId: string, mode: SecretMode): FolderNode {
+    const root = this.requireFolder(folderId, mode);
+    const ids = new Set(this.descendantFolderIds(folderId));
+    const folderList = this.listFolders(root.collectionId, mode).filter((f) => ids.has(f.id));
+    const requestList = this.listRequests(root.collectionId, mode).filter((r) => r.folderId !== null && ids.has(r.folderId));
+    const foldersByParent = new Map<string | null, Folder[]>();
+    for (const f of folderList) foldersByParent.set(f.parentFolderId, [...(foldersByParent.get(f.parentFolderId) ?? []), f]);
+    const requestsByParent = new Map<string | null, RequestModel[]>();
+    for (const r of requestList) requestsByParent.set(r.folderId, [...(requestsByParent.get(r.folderId) ?? []), r]);
+    const toNode = (f: Folder): FolderNode => {
+      const entries: Array<{ sortOrder: number; make: () => ItemNode }> = [];
+      for (const child of foldersByParent.get(f.id) ?? []) entries.push({ sortOrder: child.sortOrder, make: () => toNode(child) });
+      for (const r of requestsByParent.get(f.id) ?? []) {
+        const { id: _i, collectionId: _c, folderId: _f, sortOrder: _s, createdAt: _ca, updatedAt: _ua, ...draft } = r;
+        entries.push({ sortOrder: r.sortOrder, make: () => ({ kind: 'request', request: draft }) });
+      }
+      return {
+        kind: 'folder',
+        name: f.name,
+        description: f.description,
+        auth: f.auth,
+        scripts: f.scripts,
+        variables: stripIds(this.vars.folder.list(f.id, mode)),
+        metadata: f.metadata,
+        items: entries.sort((a, b) => a.sortOrder - b.sortOrder).map((e) => e.make()),
+      };
+    };
+    return toNode(root);
+  }
+
+  /** Deep copy of a folder placed right after its siblings. Secrets are re-vaulted for the new owners. Call inside a transaction. */
+  duplicateFolder(id: string): string {
+    const src = this.requireFolder(id);
+    const node = this.loadFolderNode(id, 'resolve');
+    const stats: ImportStats = { folders: 0, requests: 0, variables: 0, scripts: 0, examples: 0 };
+    const created = this.insertFolderNode(src.collectionId, src.parentFolderId, { ...node, name: `${node.name} Copy` }, this.nextSortOrder(src.collectionId, src.parentFolderId), stats);
+    return created.id;
+  }
+
+  private insertFolderNode(collectionId: string, parentFolderId: string | null, item: FolderNode, index: number, stats: ImportStats, progress?: { total: number; onProgress?: (p: ImportProgress) => void }): Folder {
+    const folder = this.createFolder(collectionId, parentFolderId, item, index);
+    stats.folders += 1;
+    stats.scripts += item.scripts.filter((s) => s.source.trim()).length;
+    if (item.variables.length) this.vars.folder.replaceAll(folder.id, item.variables);
+    stats.variables += item.variables.length;
+    this.insertItems(collectionId, item.items, folder.id, stats, progress);
+    return folder;
+  }
+
+  private insertItems(collectionId: string, items: readonly ItemNode[], parentFolderId: string | null, stats: ImportStats, progress?: { total: number; onProgress?: (p: ImportProgress) => void }): void {
+    items.forEach((item, index) => {
+      if (item.kind === 'folder') {
+        this.insertFolderNode(collectionId, parentFolderId, item, index, stats, progress);
+      } else {
+        this.createRequest(collectionId, parentFolderId, item.request, index);
+        stats.requests += 1;
+        stats.scripts += item.request.scripts.filter((s) => s.source.trim()).length;
+        stats.examples += item.request.examples.length;
+        if (progress && stats.requests % 50 === 0) progress.onProgress?.({ stage: 'Saving', current: stats.requests, total: progress.total });
+      }
+    });
+  }
 
   /** Load a whole collection as a portable bundle (for export / duplicate / backup). */
   loadBundle(collectionId: string, mode: SecretMode): CollectionBundle {
@@ -672,25 +979,7 @@ export class CollectionRepository {
     this.vars.collection.replaceAll(collection.id, bundle.variables);
     stats.variables += bundle.variables.length;
 
-    const insertItems = (items: readonly ItemNode[], parentFolderId: string | null): void => {
-      items.forEach((item, index) => {
-        if (item.kind === 'folder') {
-          const folder = this.createFolder(collection.id, parentFolderId, item, index);
-          stats.folders += 1;
-          stats.scripts += item.scripts.filter((s) => s.source.trim()).length;
-          if (item.variables.length) this.vars.folder.replaceAll(folder.id, item.variables);
-          stats.variables += item.variables.length;
-          insertItems(item.items, folder.id);
-        } else {
-          this.createRequest(collection.id, parentFolderId, item.request, index);
-          stats.requests += 1;
-          stats.scripts += item.request.scripts.filter((s) => s.source.trim()).length;
-          stats.examples += item.request.examples.length;
-          if (stats.requests % 50 === 0) onProgress?.({ stage: 'Saving', current: stats.requests, total });
-        }
-      });
-    };
-    insertItems(bundle.items, null);
+    this.insertItems(collection.id, bundle.items, null, stats, { total, ...(onProgress ? { onProgress } : {}) });
     onProgress?.({ stage: 'Saving', current: stats.requests, total });
     return { collectionId: collection.id, stats };
   }

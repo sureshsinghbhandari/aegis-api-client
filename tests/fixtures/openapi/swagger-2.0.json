@@ -1,0 +1,95 @@
+{
+  "swagger": "2.0",
+  "info": { "title": "Uber API", "description": "Move your app forward with the Uber API", "version": "1.0.0" },
+  "host": "api.uber.example",
+  "basePath": "/v1/",
+  "schemes": ["https", "http"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "securityDefinitions": {
+    "apikey": { "type": "apiKey", "name": "server_token", "in": "query" },
+    "basic": { "type": "basic" },
+    "oauth": { "type": "oauth2", "flow": "accessCode", "authorizationUrl": "https://login.uber.example/oauth/v2/authorize", "tokenUrl": "https://login.uber.example/oauth/v2/token", "scopes": { "profile": "Read profile", "history": "Read history" } }
+  },
+  "security": [{ "apikey": [] }],
+  "parameters": {
+    "latitude": { "name": "latitude", "in": "query", "description": "Latitude component of location.", "required": true, "type": "number", "format": "double" },
+    "payload": { "name": "payload", "in": "body", "schema": { "$ref": "#/definitions/Profile" } }
+  },
+  "paths": {
+    "/products": {
+      "get": {
+        "summary": "Product Types",
+        "description": "The Products endpoint returns information about the Uber products offered at a given location.",
+        "operationId": "listProducts",
+        "parameters": [
+          { "$ref": "#/parameters/latitude" },
+          { "name": "longitude", "in": "query", "description": "Longitude component of location.", "required": true, "type": "number", "format": "double", "x-example": "13.4" }
+        ],
+        "tags": ["Products"],
+        "responses": {
+          "200": { "description": "An array of products", "schema": { "type": "array", "items": { "$ref": "#/definitions/Product" } }, "examples": { "application/json": [{ "product_id": "p1", "display_name": "UberX" }] } },
+          "default": { "description": "Unexpected error", "schema": { "$ref": "#/definitions/Error" } }
+        }
+      }
+    },
+    "/me": {
+      "get": { "summary": "User Profile", "operationId": "getMe", "tags": ["User"], "security": [{ "oauth": ["profile"] }], "responses": { "200": { "description": "Profile information for a user", "schema": { "$ref": "#/definitions/Profile" } } } },
+      "put": { "summary": "Update profile", "operationId": "updateMe", "tags": ["User"], "parameters": [{ "$ref": "#/parameters/payload" }], "responses": { "204": { "description": "updated" } } }
+    },
+    "/me/avatar": {
+      "post": {
+        "summary": "Upload avatar",
+        "operationId": "uploadAvatar",
+        "tags": ["User"],
+        "consumes": ["multipart/form-data"],
+        "parameters": [
+          { "name": "avatar", "in": "formData", "type": "file", "required": true, "description": "The image" },
+          { "name": "comment", "in": "formData", "type": "string", "x-example": "new picture" }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/login": {
+      "post": {
+        "summary": "Form login",
+        "operationId": "login",
+        "consumes": ["application/x-www-form-urlencoded"],
+        "parameters": [
+          { "name": "username", "in": "formData", "type": "string", "required": true },
+          { "name": "password", "in": "formData", "type": "string", "format": "password", "required": true }
+        ],
+        "security": [{ "basic": [] }],
+        "responses": { "200": { "description": "ok", "headers": { "X-Session": { "type": "string", "description": "session id" } } } }
+      }
+    },
+    "/history/{tripId}": {
+      "get": {
+        "summary": "Trip",
+        "operationId": "getTrip",
+        "tags": ["User"],
+        "parameters": [{ "name": "tripId", "in": "path", "required": true, "type": "string" }, { "name": "X-Client", "in": "header", "type": "string", "required": true }],
+        "responses": { "200": { "description": "History information for the given user", "schema": { "$ref": "#/definitions/Activity" } } }
+      }
+    }
+  },
+  "definitions": {
+    "Product": {
+      "type": "object",
+      "properties": {
+        "product_id": { "type": "string", "description": "Unique identifier representing a specific product." },
+        "display_name": { "type": "string", "description": "Display name of product." },
+        "capacity": { "type": "integer", "description": "Capacity of product.", "x-nullable": true },
+        "image": { "type": "string", "format": "uri" }
+      }
+    },
+    "Profile": {
+      "type": "object",
+      "required": ["email"],
+      "properties": { "first_name": { "type": "string", "example": "Ada" }, "last_name": { "type": "string" }, "email": { "type": "string", "format": "email" }, "picture": { "$ref": "#/definitions/Picture" } }
+    },
+    "Picture": { "type": "object", "properties": { "url": { "type": "string" } } },
+    "Activity": { "type": "object", "properties": { "uuid": { "type": "string", "format": "uuid" }, "product": { "$ref": "#/definitions/Product" } } },
+    "Error": { "type": "object", "properties": { "code": { "type": "integer", "format": "int32" }, "message": { "type": "string" } } }
+  }
+}

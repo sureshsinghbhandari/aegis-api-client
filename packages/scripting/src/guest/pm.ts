@@ -174,6 +174,7 @@ function normalizeSendRequest(arg) {
     const t = Number(arg.timeout);
     if (isFinite(t) && t > 0) req.timeoutMs = t;
   }
+  applySendRequestAuth(req, arg.auth);
   return req;
 }
 function reportUncaught(e) {
@@ -227,21 +228,79 @@ function unsupported(what) {
 }
 
 const environmentScope = new Scope('environment');
-$defineProperty(environmentScope, 'name', { value: 'environment', enumerable: false });
+const environmentName = input.info && typeof input.info.environmentName === 'string' ? input.info.environmentName : undefined;
+$defineProperty(environmentScope, 'name', { value: environmentName, enumerable: false });
 const visibleCookies = new CookieList(input.cookies.filter(function (c) { return !c.httpOnly; }));
-function cookieCallback(cb, value) {
+const jarAvailable = !!(input.features && input.features.cookieJar);
+// Postman style: callback(err, value) when a callback is given, otherwise a promise.
+function deliver(promise, cb) {
   if (typeof cb === 'function') {
-    Promise.resolve().then(function () { try { cb(null, value); } catch (e) { reportUncaught(e); } });
+    promise.then(
+      function (value) { try { cb(null, value); } catch (e) { reportUncaught(e); } },
+      function (err) { try { cb(err); } catch (e) { reportUncaught(e); } },
+    );
     return undefined;
   }
-  return Promise.resolve(value);
+  return promise;
+}
+function jarOp(op, pick, fallback) {
+  let promise;
+  if (!jarAvailable) {
+    promise = fallback ? Promise.resolve(fallback()) : Promise.reject(new Error('pm.cookies.jar().' + op.op + '() is not available: the cookie jar cannot be modified in this context.'));
+  } else {
+    try {
+      promise = host.cookieJar($stringify(op)).then(function (envelope) {
+        const env = $parse(envelope);
+        if (!env.ok) throw new Error(env.error);
+        return pick(env.result.cookies);
+      });
+    } catch (e) {
+      promise = Promise.reject(e);
+    }
+  }
+  return promise;
+}
+function normalizeJarCookie(c) {
+  if (c === null || typeof c !== 'object') throw new TypeError('pm.cookies.jar().set() expects a cookie object or a name and a value');
+  const name = c.name !== undefined ? c.name : c.key;
+  if (name === undefined || name === null || String(name) === '') throw new TypeError('pm.cookies.jar().set(): a cookie name is required');
+  if (c.httpOnly) throw new TypeError('pm.cookies.jar().set(): scripts cannot set httpOnly cookies');
+  const out = { name: String(name), value: c.value === undefined || c.value === null ? '' : toStr(c.value) };
+  if (c.domain !== undefined && c.domain !== null) out.domain = String(c.domain);
+  if (c.path !== undefined && c.path !== null) out.path = String(c.path);
+  if (c.expires !== undefined && c.expires !== null) {
+    const d = c.expires instanceof Date ? c.expires : new Date(typeof c.expires === 'number' ? c.expires : String(c.expires));
+    if (isNaN(d.getTime())) throw new TypeError('pm.cookies.jar().set(): invalid "expires" value');
+    out.expires = d.toISOString();
+  }
+  if (c.maxAge !== undefined && c.maxAge !== null) out.maxAge = Number(c.maxAge);
+  if (c.secure !== undefined) out.secure = !!c.secure;
+  if (c.sameSite !== undefined && c.sameSite !== null) out.sameSite = String(c.sameSite);
+  return out;
 }
 const cookieJar = {
-  get(url, name, cb) { return cookieCallback(cb, visibleCookies.get(name)); },
-  getAll(url, cb) { return cookieCallback(cb, visibleCookies.all()); },
-  set() { warn('pm.cookies.jar().set() is a no-op: the cookie jar is read-only for scripts.'); return cookieCallback(arguments[arguments.length - 1]); },
-  unset() { warn('pm.cookies.jar().unset() is a no-op: the cookie jar is read-only for scripts.'); return cookieCallback(arguments[arguments.length - 1]); },
-  clear() { warn('pm.cookies.jar().clear() is a no-op: the cookie jar is read-only for scripts.'); return cookieCallback(arguments[arguments.length - 1]); },
+  get(url, name, cb) {
+    const n = String(name);
+    return deliver(jarOp({ op: 'get', url: toStr(url), name: n }, function (list) { return list.length ? list[0].value : undefined; }, function () { return visibleCookies.get(n); }), cb);
+  },
+  getAll(url, options, cb) {
+    if (typeof options === 'function') { cb = options; options = undefined; }
+    return deliver(jarOp({ op: 'getAll', url: toStr(url) }, function (list) { return list; }, function () { return visibleCookies.all(); }), cb);
+  },
+  set(url, nameOrCookie, value, cb) {
+    let cookie;
+    if (nameOrCookie !== null && typeof nameOrCookie === 'object') { cookie = nameOrCookie; cb = value; }
+    else cookie = { name: nameOrCookie, value: value };
+    let op;
+    try { op = { op: 'set', url: toStr(url), cookie: normalizeJarCookie(cookie) }; } catch (e) { return deliver(Promise.reject(e), cb); }
+    return deliver(jarOp(op, function (list) { return list.length ? list[0] : undefined; }), cb);
+  },
+  unset(url, name, cb) {
+    return deliver(jarOp({ op: 'unset', url: toStr(url), name: String(name) }, function () { return undefined; }), cb);
+  },
+  clear(url, cb) {
+    return deliver(jarOp({ op: 'clear', url: toStr(url) }, function () { return undefined; }), cb);
+  },
 };
 const cookies = visibleCookies;
 $defineProperty(cookies, 'jar', { value: function jar() { return cookieJar; }, enumerable: false });
@@ -276,8 +335,8 @@ const pm = {
     },
     location: executionLocation,
   },
-  require: unsupported('pm.require()'),
-  visualizer: { set: unsupported('pm.visualizer.set()'), clear: function () {} },
+  require: unsupported('pm.require() (Postman package library)'),
+  visualizer: pmVisualizer,
 };
 if (response !== undefined) pm.response = response;
 $defineProperty(pm, 'toJSON', { value: function () { return {}; }, enumerable: false });
@@ -318,16 +377,6 @@ if (response !== undefined) {
   define('responseTime', response.responseTime);
 }
 
-// Libraries that are deliberately not provided: fail loudly with a helpful message.
-for (const lib of ['CryptoJS', '_', 'moment', 'cheerio', 'tv4', 'xml2Json']) {
-  $defineProperty(G, lib, {
-    get() { throw new Error(lib + ' is not available in the Aegis script sandbox (see docs/features/scripting.md).'); },
-    set(v) { $defineProperty(G, lib, { value: v, writable: true, configurable: true, enumerable: false }); },
-    configurable: true,
-    enumerable: false,
-  });
-}
-
 // ---------------------------------------------------------------- results
 function snapshot() {
   const variables = {};
@@ -348,6 +397,7 @@ function snapshot() {
     request: requestSnapshot(),
     skipRequest: skipRequestFlag,
     nextRequest: { called: nextRequestCalled, value: nextRequestValue },
+    visualizer: visualizerHtml,
   });
 }
 function describeJson(e) { return $stringify(describeError(e)); }

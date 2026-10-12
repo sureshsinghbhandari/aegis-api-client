@@ -39,6 +39,18 @@ export function runMenuAction(action: string): void {
     case 'import-backup':
       ui.openModal('import', { kind: 'backup', autoPick: true });
       break;
+    case 'import-openapi':
+      ui.openModal('import', { kind: 'openapi', autoPick: true });
+      break;
+    case 'import-har':
+      ui.openModal('import', { kind: 'har', autoPick: true });
+      break;
+    case 'import-insomnia':
+      ui.openModal('import', { kind: 'insomnia', autoPick: true });
+      break;
+    case 'import-auto':
+      ui.openModal('import', { kind: 'auto', autoPick: true });
+      break;
     case 'export-collection':
       ui.openModal('export', app.collections[0] ? { collectionId: app.collections[0].id } : {});
       break;

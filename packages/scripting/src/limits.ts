@@ -18,6 +18,13 @@ export const MAX_CONSOLE_MESSAGE_CHARS = 16 * 1024;
 export const MAX_TESTS = 5000;
 export const MAX_SOURCE_CHARS = 2 * 1024 * 1024;
 export const MAX_PENDING_TIMERS = 1000;
+/** `pm.visualizer.set()` template and rendered HTML size. */
+export const MAX_VISUALIZER_CHARS = 2 * 1024 * 1024;
+/** `pm.cookies.jar()` operations per script run. */
+export const MAX_COOKIE_OPS = 200;
+/** Host randomness bridge (uuid / CryptoJS.lib.WordArray.random): calls per run and bytes per call. */
+export const MAX_RANDOM_CALLS = 100_000;
+export const MAX_RANDOM_BYTES_PER_CALL = 65_536;
 
 export interface ResolvedLimits {
   timeoutMs: number;

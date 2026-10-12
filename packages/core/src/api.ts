@@ -20,7 +20,7 @@ import type {
   VariableEntry,
   Workspace,
 } from './model';
-import type { HeaderPair } from './http';
+import type { ConnectionInfo, HeaderPair, TlsConnectionInfo } from './http';
 import type { ConsoleEntry, TestResult } from './scripting';
 
 // ----------------------------------------------------------------------------- execution
@@ -67,7 +67,11 @@ export interface ResponseView {
   requestSize: number;
   url: string;
   redirects: Array<{ url: string; status: number; location: string }>;
-  timings: { waitingMs: number; downloadMs: number; totalMs: number; startedAt: number };
+  timings: { waitingMs: number; downloadMs: number; totalMs: number; startedAt: number; dnsMs?: number; connectMs?: number; tlsMs?: number };
+  /** TLS protocol, cipher and peer certificate of the final hop (https only). */
+  tls?: TlsConnectionInfo;
+  /** Remote/local addresses of the final hop (direct connections only). */
+  connection?: ConnectionInfo;
   /** First part of the body as text (UTF-8, lossy for binary). Use `responses.readChunk` for more. */
   bodyPreview: string;
   /** Bytes covered by `bodyPreview`. */
@@ -103,6 +107,8 @@ export interface ExecutionResult {
   environment?: { id: string; name: string; isProduction: boolean } | null;
   skipped?: boolean;
   nextRequest?: string | null;
+  /** Sanitised HTML produced by `pm.visualizer.set` (rendered by the Visualize tab inside a sandboxed iframe). */
+  visualizer?: string;
 }
 
 // ----------------------------------------------------------------------------- trees / search
@@ -160,16 +166,53 @@ export interface HistorySearchInput {
 
 // ----------------------------------------------------------------------------- import / export
 
+/** Newest history rows per workspace that a backup includes unless the caller asks for more. */
+export const BACKUP_HISTORY_LIMIT_DEFAULT = 500;
+export const BACKUP_HISTORY_LIMIT_MAX = 100_000;
+
+/**
+ * What the user asked to import. `auto` detects the format from the content
+ * (Postman v1/v2, data dump, OpenAPI/Swagger, HAR, Insomnia, Aegis workspace/backup).
+ */
+export type ImportSourceKind =
+  | 'postman-collection'
+  | 'postman-environment'
+  | 'backup'
+  | 'openapi'
+  | 'har'
+  | 'insomnia'
+  | 'postman-v1'
+  | 'postman-dump'
+  | 'aegis-workspace'
+  | 'auto';
+
+/** What the importer found. */
+export type ImportDocumentKind =
+  | 'postman-collection'
+  | 'postman-environment'
+  | 'postman-globals'
+  | 'aegis-backup'
+  | 'aegis-workspace'
+  | 'openapi'
+  | 'swagger'
+  | 'har'
+  | 'insomnia'
+  | 'postman-v1'
+  | 'postman-dump';
+
 export interface ImportPreview {
   /** Opaque token to commit or discard this import (the parsed data stays in the main process). */
   token: string;
-  kind: 'postman-collection' | 'postman-environment' | 'postman-globals' | 'aegis-backup' | 'aegis-workspace';
+  kind: ImportDocumentKind;
   fileName: string;
   name: string;
   stats: ImportStats;
   warnings: ImportWarningModel[];
   warningCounts: { INFO: number; WARNING: number; ERROR: number };
   schemaVersion?: string;
+  /** Number of collections / environments the file contains (multi-document formats). */
+  collections?: number;
+  environments?: number;
 }
 
 export interface ImportCommitResult {
@@ -205,6 +248,27 @@ export interface RunnerOptions {
   /** Raw text of a CSV or JSON data file (parsed in the main process). */
   dataFile?: { name: string; content: string };
   confirmProduction?: boolean;
+  /**
+   * Run only these requests, in this order (ids from `collections.tree`). Unknown ids are ignored;
+   * when omitted (or empty) every request of the collection/folder runs in tree order.
+   */
+  requestIds?: string[];
+  /** Store a redacted response head (status, non-sensitive headers, first 64 KiB of the body) with each result. */
+  keepResponses?: boolean;
+}
+
+/** Redacted response head kept with a run item when `RunnerOptions.keepResponses` is set. */
+export interface RunnerItemResponse {
+  status: number;
+  statusText: string;
+  contentType: string;
+  /** Sensitive headers (Authorization, Cookie, Set-Cookie, tokens, ...) are removed, never stored. */
+  headers: HeaderPair[];
+  /** Redacted body text (first 64 KiB, UTF-8; empty for binary bodies). */
+  body: string;
+  bodyTruncated: boolean;
+  /** Total body size in bytes. */
+  size: number;
 }
 
 export interface RunnerItemEvent {
@@ -220,6 +284,8 @@ export interface RunnerItemEvent {
   passed: boolean;
   error?: string;
   tests: TestResult[];
+  /** Present only when the run was started with `keepResponses`. */
+  response?: RunnerItemResponse;
 }
 
 export interface RunnerDoneEvent {
@@ -305,6 +371,96 @@ export interface FolderUpdate {
 
 export type CollectionUpdate = FolderUpdate;
 
+// ----------------------------------------------------------------------------- find & replace / cookies
+
+export type FindReplaceScope = 'url' | 'params' | 'headers' | 'body' | 'scripts' | 'descriptions' | 'variables';
+
+export const FIND_REPLACE_SCOPES: readonly FindReplaceScope[] = ['url', 'params', 'headers', 'body', 'scripts', 'descriptions', 'variables'];
+
+export interface FindReplaceInput {
+  /** One collection, or omit and pass `workspaceId` to search every collection of the workspace. */
+  collectionId?: string;
+  workspaceId?: string;
+  find: string;
+  replace: string;
+  scopes: FindReplaceScope[];
+  matchCase?: boolean;
+  /** Match only whole words (letters, digits and `_` are word characters). */
+  wholeWord?: boolean;
+  /** Treat `find` as a regular expression (bounded: max 500 chars, no nested quantifiers, time budget). `$1` works in `replace`. */
+  useRegex?: boolean;
+  /** `false` = preview only (count matches, change nothing). */
+  apply: boolean;
+}
+
+/** One before/after excerpt for the preview. Never produced for secret values. */
+export interface FindReplaceSample {
+  /** Where the match is, e.g. `Request "List users" › url`. */
+  location: string;
+  before: string;
+  after: string;
+}
+
+export interface FindReplaceResult {
+  /** Total number of matched occurrences. */
+  matches: number;
+  /** Number of requests with at least one match. */
+  requests: number;
+  /** Number of folders (descriptions / scripts) with at least one match. */
+  folders: number;
+  /** Number of variables (collection + folder scope) with at least one match. Secret variables are never touched. */
+  variables: number;
+  /** True when a collection's own description or scripts matched. */
+  collection: boolean;
+  /** Collections with at least one match (anywhere inside). */
+  collections: number;
+  /** Matches per scope. */
+  byScope: Record<FindReplaceScope, number>;
+  /** Capped list of before/after excerpts (preview and apply). */
+  samples: FindReplaceSample[];
+  /** Human-readable summary, e.g. `12 matches in 4 requests`. */
+  summary: string;
+  applied: boolean;
+}
+
+export interface CookieInput {
+  workspaceId: string;
+  domain: string;
+  path?: string;
+  name: string;
+  /** Stored in the vault, never in a plain table. */
+  value: string;
+  hostOnly?: boolean;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: string | null;
+  /** ISO timestamp; null/undefined = session cookie. */
+  expiresAt?: string | null;
+}
+
+// ----------------------------------------------------------------------------- OAuth 2.0 device flow
+
+export interface OAuth2DeviceInput {
+  requestId?: string;
+  collectionId?: string;
+  folderId?: string;
+  auth: AuthConfig;
+  environmentId?: string | null;
+  workspaceId: string;
+}
+
+export interface OAuth2DeviceStart {
+  /** Credential for the token polls; the renderer keeps it in memory only and never displays it. */
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string;
+  expiresIn: number;
+  interval: number;
+}
+
+export type OAuth2DevicePoll = { status: 'pending'; interval: number } | { status: 'done'; params: Record<string, string | number | boolean> };
+
 // ----------------------------------------------------------------------------- the API
 
 export interface AegisApi {
@@ -330,12 +486,16 @@ export interface AegisApi {
     reorder(input: { workspaceId: string; orderedIds: string[] }): Promise<void>;
     tree(input: { collectionId: string }): Promise<TreeNode[]>;
     search(input: { workspaceId: string; query: string }): Promise<SearchResult[]>;
+    /** Find & replace across one collection (or a whole workspace). Preview with `apply: false`; applying runs in one transaction and is audited (counts only). */
+    findReplace(input: FindReplaceInput): Promise<FindReplaceResult>;
   };
   folders: {
     get(input: { id: string }): Promise<Folder>;
     create(input: { collectionId: string; parentFolderId: string | null; name: string }): Promise<Folder>;
     update(input: { id: string } & FolderUpdate): Promise<Folder>;
     delete(input: { id: string }): Promise<void>;
+    /** Deep copy of a folder (sub-folders, requests, scripts, variables, auth) next to the original. */
+    duplicate(input: { id: string }): Promise<Folder>;
   };
   requests: {
     get(input: { id: string }): Promise<RequestModel>;
@@ -343,8 +503,8 @@ export interface AegisApi {
     save(input: { id: string; draft: RequestDraft }): Promise<RequestModel>;
     delete(input: { id: string }): Promise<void>;
     duplicate(input: { id: string }): Promise<RequestModel>;
-    /** Move a folder or request; `index` is the position among the target's children. */
-    move(input: { kind: 'folder' | 'request'; id: string; parentFolderId: string | null; index: number }): Promise<void>;
+    /** Move a folder or request; `index` is the position among the target's children. `collectionId` moves it into another collection. */
+    move(input: { kind: 'folder' | 'request'; id: string; parentFolderId: string | null; index: number; collectionId?: string }): Promise<void>;
     /** Effective auth after inheritance, for display ("Inherited from Folder X"). */
     effectiveAuth(input: { id: string }): Promise<{ auth: AuthConfig; source: string }>;
   };
@@ -389,14 +549,15 @@ export interface AegisApi {
   };
   importExport: {
     /** Open a file dialog, parse the file, return a preview. Null if cancelled. */
-    pickAndPreview(input: { kind: 'postman-collection' | 'postman-environment' | 'backup' }): Promise<ImportPreview | null>;
+    pickAndPreview(input: { kind: ImportSourceKind }): Promise<ImportPreview | null>;
     /** Parse content supplied directly (drag & drop / paste). */
-    previewContent(input: { kind: 'postman-collection' | 'postman-environment' | 'backup'; fileName: string; content: string }): Promise<ImportPreview>;
+    previewContent(input: { kind: ImportSourceKind; fileName: string; content: string }): Promise<ImportPreview>;
     commit(input: { token: string; workspaceId: string; passphrase?: string }): Promise<ImportCommitResult>;
     discard(input: { token: string }): Promise<void>;
     exportCollection(input: { collectionId: string; includeSecrets: boolean }): Promise<string | null>;
     exportEnvironment(input: { environmentId: string; includeSecrets: boolean }): Promise<string | null>;
-    createBackup(input: { includeHistory: boolean; passphrase?: string }): Promise<BackupInfo | null>;
+    /** `historyLimit`: newest history rows per workspace to include (default `BACKUP_HISTORY_LIMIT_DEFAULT`, max `BACKUP_HISTORY_LIMIT_MAX`). */
+    createBackup(input: { includeHistory: boolean; passphrase?: string; historyLimit?: number }): Promise<BackupInfo | null>;
     listBackups(): Promise<BackupInfo[]>;
   };
   settings: {
@@ -409,10 +570,19 @@ export interface AegisApi {
     reveal(input: { id: string }): Promise<string>;
     delete(input: { id: string }): Promise<void>;
     clear(input: { workspaceId: string; domain?: string }): Promise<number>;
+    /** Add a cookie by hand (value goes to the vault). Fails when the same domain/path/name already exists. */
+    add(input: CookieInput): Promise<CookieView>;
+    /** Edit a cookie; omit `value` to keep the stored one. */
+    update(input: { id: string } & Partial<Omit<CookieInput, 'workspaceId'>>): Promise<CookieView>;
   };
   certificates: {
     list(): Promise<CertificateView[]>;
-    add(input: { kind: 'ca' | 'client'; name: string; hostPattern?: string; certPem?: string; keyPem?: string; passphrase?: string }): Promise<CertificateView>;
+    /**
+     * Add a CA (PEM) or client certificate. Client certificates are either PEM `certPem` + `keyPem`, or a PKCS#12
+     * bundle given as `pfxBase64` or as a local `pfxPath` (read in the main process, size-capped). Keys, PFX bundles
+     * and passphrases go to the vault.
+     */
+    add(input: { kind: 'ca' | 'client'; name: string; hostPattern?: string; certPem?: string; keyPem?: string; pfxBase64?: string; pfxPath?: string; passphrase?: string }): Promise<CertificateView>;
     /** File picker for certificates / keys; returns the file content. */
     pickFile(input: { purpose: 'certificate' | 'key' }): Promise<{ name: string; content: string } | null>;
     setEnabled(input: { id: string; enabled: boolean }): Promise<void>;
@@ -424,7 +594,20 @@ export interface AegisApi {
   tools: {
     decodeJwt(input: { token: string }): Promise<{ header: Record<string, unknown>; payload: Record<string, unknown>; expiresAt?: number; expired?: boolean }>;
     pickFile(input: { purpose: 'upload' | 'data' }): Promise<{ path: string; name: string; size: number } | null>;
-    oauth2GetToken(input: { requestId?: string; collectionId?: string; folderId?: string; auth: AuthConfig; environmentId?: string | null; workspaceId: string }): Promise<{ params: Record<string, string | number | boolean> }>;
+    /**
+     * Interactive "Get New Access Token". `{{variables}}` in the auth parameters are resolved with the full scope chain
+     * (request's collection/folders, environment, globals). Pass a client-generated `cancelId` and call
+     * `execution.cancel({ executionId: cancelId })` to abort a pending flow.
+     */
+    oauth2GetToken(input: { requestId?: string; collectionId?: string; folderId?: string; auth: AuthConfig; environmentId?: string | null; workspaceId: string; cancelId?: string }): Promise<{ params: Record<string, string | number | boolean> }>;
+    /**
+     * OAuth 2.0 device authorization grant (RFC 8628), step 1: request a device code. The UI shows
+     * `userCode` and `verificationUri` to the user, then calls `oauth2DevicePoll` every `interval`
+     * seconds until it answers `done` (or the user cancels by simply not polling again).
+     */
+    oauth2DeviceStart(input: OAuth2DeviceInput): Promise<OAuth2DeviceStart>;
+    /** Step 2: one poll of the token endpoint. `pending` carries the (possibly increased) interval to wait before the next poll. */
+    oauth2DevicePoll(input: OAuth2DeviceInput & { deviceCode: string; interval: number }): Promise<OAuth2DevicePoll>;
   };
   events: {
     /** Subscribe to main-process events; returns an unsubscribe function. */
@@ -460,6 +643,8 @@ export const API_CHANNELS = [
   'certificates.list', 'certificates.add', 'certificates.pickFile', 'certificates.setEnabled', 'certificates.delete',
   'audit.list',
   'tools.decodeJwt', 'tools.pickFile', 'tools.oauth2GetToken',
+  'collections.findReplace', 'folders.duplicate', 'cookies.add', 'cookies.update',
+  'tools.oauth2DeviceStart', 'tools.oauth2DevicePoll',
 ] as const;
 
 export type ApiChannel = (typeof API_CHANNELS)[number];

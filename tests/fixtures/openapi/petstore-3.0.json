@@ -1,0 +1,205 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Swagger Petstore",
+    "description": "A sample Pet Store server used to test the Aegis OpenAPI importer.",
+    "version": "1.0.11",
+    "contact": { "email": "apiteam@example.com" }
+  },
+  "externalDocs": { "description": "Find out more", "url": "https://example.com/docs" },
+  "servers": [
+    { "url": "https://{env}.petstore.example/api/{version}", "variables": { "env": { "default": "sandbox", "enum": ["sandbox", "prod"] }, "version": { "default": "v3" } } },
+    { "url": "http://localhost:8080/api/v3" }
+  ],
+  "tags": [
+    { "name": "pet", "description": "Everything about your Pets" },
+    { "name": "store", "description": "Access to Petstore orders" },
+    { "name": "unused", "description": "No operation uses this tag" }
+  ],
+  "security": [{ "api_key": [] }],
+  "x-aegis-fixture": true,
+  "paths": {
+    "/pet": {
+      "post": {
+        "tags": ["pet"],
+        "summary": "Add a new pet to the store",
+        "description": "Add a new pet to the store",
+        "operationId": "addPet",
+        "requestBody": {
+          "description": "Create a new pet in the store",
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } },
+            "application/xml": { "schema": { "$ref": "#/components/schemas/Pet" } }
+          }
+        },
+        "responses": {
+          "200": { "description": "Successful operation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } },
+          "405": { "description": "Invalid input" }
+        },
+        "security": [{ "petstore_auth": ["write:pets", "read:pets"] }],
+        "callbacks": { "onData": { "{$request.body#/callbackUrl}": { "post": { "responses": { "200": { "description": "ok" } } } } } }
+      }
+    },
+    "/pet/findByStatus": {
+      "get": {
+        "tags": ["pet"],
+        "summary": "Finds Pets by status",
+        "operationId": "findPetsByStatus",
+        "parameters": [
+          { "name": "status", "in": "query", "description": "Status values that need to be considered for filter", "required": false, "schema": { "type": "string", "default": "available", "enum": ["available", "pending", "sold"] } },
+          { "name": "limit", "in": "query", "required": true, "schema": { "type": "integer", "minimum": 1, "example": 25 } },
+          { "name": "X-Trace-Id", "in": "header", "required": false, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "session", "in": "cookie", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "successful operation",
+            "headers": { "X-Rate-Limit": { "description": "calls per hour allowed by the user", "schema": { "type": "integer", "example": 100 } } },
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Pet" } }, "examples": { "two": { "summary": "two pets", "value": [{ "id": 1, "name": "doggie" }] } } } }
+          },
+          "400": { "description": "Invalid status value" }
+        }
+      }
+    },
+    "/pet/{petId}": {
+      "parameters": [{ "name": "petId", "in": "path", "description": "ID of pet", "required": true, "schema": { "type": "integer", "format": "int64", "example": 10 } }],
+      "get": {
+        "tags": ["pet"],
+        "summary": "Find pet by ID",
+        "operationId": "getPetById",
+        "responses": {
+          "200": { "description": "successful operation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" }, "example": { "id": 10, "name": "doggie", "status": "available" } } } },
+          "404": { "description": "Pet not found" }
+        }
+      },
+      "post": {
+        "tags": ["pet"],
+        "summary": "Updates a pet in the store with form data",
+        "operationId": "updatePetWithForm",
+        "deprecated": true,
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": { "schema": { "type": "object", "properties": { "name": { "type": "string", "example": "Rex" }, "status": { "type": "string" } }, "required": ["name"] } }
+          }
+        },
+        "responses": { "405": { "description": "Invalid input" } }
+      },
+      "delete": {
+        "tags": ["pet"],
+        "summary": "Deletes a pet",
+        "operationId": "deletePet",
+        "parameters": [{ "name": "api_key", "in": "header", "required": false, "schema": { "type": "string" } }],
+        "responses": { "400": { "description": "Invalid pet value" } },
+        "security": []
+      }
+    },
+    "/pet/{petId}/uploadImage": {
+      "post": {
+        "tags": ["pet"],
+        "summary": "uploads an image",
+        "operationId": "uploadFile",
+        "parameters": [{ "name": "petId", "in": "path", "required": true, "schema": { "type": "integer" } }, { "$ref": "#/components/parameters/additionalMetadata" }],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": { "type": "object", "properties": { "file": { "type": "string", "format": "binary" }, "caption": { "type": "string", "example": "A photo" } } },
+              "encoding": { "file": { "contentType": "image/png" } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "successful operation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiResponse" } } } } }
+      }
+    },
+    "/store/inventory": {
+      "get": {
+        "tags": ["store"],
+        "summary": "Returns pet inventories by status",
+        "operationId": "getInventory",
+        "responses": { "200": { "description": "successful operation", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": { "type": "integer", "format": "int32" } } } } } },
+        "security": [{ "api_key": [] }]
+      }
+    },
+    "/store/order": {
+      "post": {
+        "tags": ["store"],
+        "summary": "Place an order for a pet",
+        "operationId": "placeOrder",
+        "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } } },
+        "responses": { "200": { "description": "successful operation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } } } }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check (no tag)",
+        "operationId": "health",
+        "servers": [{ "url": "https://status.petstore.example" }],
+        "responses": { "200": { "description": "ok", "content": { "text/plain": { "example": "OK" } } } }
+      }
+    },
+    "/user/login": {
+      "get": {
+        "tags": ["user"],
+        "summary": "Logs user into the system",
+        "operationId": "loginUser",
+        "parameters": [
+          { "name": "username", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "password", "in": "query", "required": true, "schema": { "type": "string", "format": "password" } }
+        ],
+        "responses": { "200": { "description": "successful operation", "content": { "application/json": { "schema": { "type": "string" } } } } },
+        "security": [{ "basic_auth": [] }, { "api_key": [] }]
+      }
+    },
+    "/external": {
+      "get": {
+        "summary": "References another file",
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "$ref": "https://example.com/schemas/remote.json#/Thing" } } } } }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "additionalMetadata": { "name": "additionalMetadata", "in": "query", "description": "Additional Metadata", "required": false, "schema": { "type": "string" } }
+    },
+    "schemas": {
+      "Order": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "format": "int64", "example": 10 },
+          "petId": { "type": "integer", "format": "int64", "example": 198772 },
+          "quantity": { "type": "integer", "format": "int32", "example": 7 },
+          "shipDate": { "type": "string", "format": "date-time" },
+          "status": { "type": "string", "description": "Order Status", "example": "approved", "enum": ["placed", "approved", "delivered"] },
+          "complete": { "type": "boolean" }
+        }
+      },
+      "Category": { "type": "object", "properties": { "id": { "type": "integer", "format": "int64", "example": 1 }, "name": { "type": "string", "example": "Dogs" } } },
+      "Tag": { "type": "object", "properties": { "id": { "type": "integer", "format": "int64" }, "name": { "type": "string" } } },
+      "Pet": {
+        "required": ["name", "photoUrls"],
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "format": "int64", "example": 10 },
+          "name": { "type": "string", "example": "doggie" },
+          "category": { "$ref": "#/components/schemas/Category" },
+          "photoUrls": { "type": "array", "items": { "type": "string", "format": "uri" } },
+          "tags": { "type": "array", "items": { "$ref": "#/components/schemas/Tag" } },
+          "status": { "type": "string", "description": "pet status in the store", "enum": ["available", "pending", "sold"] },
+          "owner": { "$ref": "#/components/schemas/Missing" }
+        }
+      },
+      "ApiResponse": { "type": "object", "properties": { "code": { "type": "integer", "format": "int32" }, "type": { "type": "string" }, "message": { "type": "string" } } }
+    },
+    "securitySchemes": {
+      "petstore_auth": {
+        "type": "oauth2",
+        "flows": {
+          "implicit": { "authorizationUrl": "https://petstore.example/oauth/authorize", "scopes": { "write:pets": "modify pets in your account", "read:pets": "read your pets" } },
+          "authorizationCode": { "authorizationUrl": "https://petstore.example/oauth/authorize", "tokenUrl": "https://petstore.example/oauth/token", "scopes": { "write:pets": "modify pets", "read:pets": "read pets" } }
+        }
+      },
+      "api_key": { "type": "apiKey", "name": "api_key", "in": "header" },
+      "basic_auth": { "type": "http", "scheme": "basic" }
+    }
+  }
+}

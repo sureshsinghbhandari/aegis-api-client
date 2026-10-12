@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ImportCommitResult, ImportPreview, ImportProgress, ImportWarningModel } from '@aegis/core';
+import type { ImportCommitResult, ImportPreview, ImportProgress, ImportSourceKind, ImportWarningModel } from '@aegis/core';
 import { ApiError, api, errorMessage } from '../lib/api';
-import { IMPORT_STAGES, previewSummaryLines, progressView, warningsFromDetails } from '../lib/import-helpers';
+import { IMPORT_KINDS, IMPORT_STAGES, asImportKind, importCreatesWorkspace, previewSummaryLines, progressView, warningsFromDetails } from '../lib/import-helpers';
 import { Button, ErrorBanner, Field, Modal, Spinner } from '../components/ui';
 import { useApp } from '../store/app';
 import { useUi } from '../store/ui';
@@ -9,24 +9,13 @@ import { WarningList } from './import/WarningList';
 import type { ModalComponentProps } from './ModalHost';
 import '../styles/panels.css';
 
-type Kind = 'postman-collection' | 'postman-environment' | 'backup';
 type Step = 'choose' | 'preview' | 'progress' | 'done';
-
-const KINDS: Array<{ id: Kind; label: string; hint: string }> = [
-  { id: 'postman-collection', label: 'Postman Collection (v2.0 / v2.1)', hint: 'A collection exported from Postman or another tool as JSON.' },
-  { id: 'postman-environment', label: 'Postman Environment / Globals', hint: 'An environment or globals file exported from Postman.' },
-  { id: 'backup', label: 'Aegis Backup', hint: 'A backup created with "Backup…". Encrypted backups ask for their passphrase.' },
-];
 
 const MAX_FILE_BYTES = 200 * 1024 * 1024;
 
-function asKind(v: unknown): Kind {
-  return v === 'postman-environment' || v === 'backup' ? v : 'postman-collection';
-}
-
 export default function ImportModal({ props }: ModalComponentProps) {
   const workspaceId = useApp((s) => s.workspaceId);
-  const [kind, setKind] = useState<Kind>(asKind(props?.kind));
+  const [kind, setKind] = useState<ImportSourceKind>(asImportKind(props?.kind));
   const [step, setStep] = useState<Step>('choose');
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [busy, setBusy] = useState(false);
@@ -54,39 +43,37 @@ export default function ImportModal({ props }: ModalComponentProps) {
   // Never leave a parsed import lingering in the main process.
   useEffect(() => discard, [discard]);
 
-  const acceptPreview = (p: ImportPreview) => {
-    discard();
-    pending.current = p.token;
-    setPreview(p);
-    setStep('preview');
-  };
+  const acceptPreview = useCallback(
+    (p: ImportPreview) => {
+      discard();
+      pending.current = p.token;
+      setPreview(p);
+      setStep('preview');
+    },
+    [discard],
+  );
 
   const pick = useCallback(
-    async (k: Kind) => {
+    async (k: ImportSourceKind) => {
       setBusy(true);
       setError(null);
       setErrorWarnings([]);
       try {
         const p = await api.importExport.pickAndPreview({ kind: k });
-        if (p) {
-          discard();
-          pending.current = p.token;
-          setPreview(p);
-          setStep('preview');
-        }
+        if (p) acceptPreview(p);
       } catch (e) {
         setFailure(e);
       } finally {
         setBusy(false);
       }
     },
-    [discard, setFailure],
+    [acceptPreview, setFailure],
   );
 
   useEffect(() => {
     if (props?.autoPick === true && !autoPicked.current) {
       autoPicked.current = true;
-      void pick(asKind(props.kind));
+      void pick(asImportKind(props.kind));
     }
   }, [props, pick]);
 
@@ -137,7 +124,7 @@ export default function ImportModal({ props }: ModalComponentProps) {
       setFailedAfterCommit(false);
       setStep('done');
       const app = useApp.getState();
-      await Promise.all([app.refreshCollections(), app.refreshEnvironments(), res.kind === 'aegis-backup' || res.kind === 'aegis-workspace' ? app.refreshWorkspaces() : Promise.resolve()]).catch(() => undefined);
+      await Promise.all([app.refreshCollections(), app.refreshEnvironments(), importCreatesWorkspace(res.kind) ? app.refreshWorkspaces() : Promise.resolve()]).catch(() => undefined);
     } catch (e) {
       // The main process imports atomically: on any failure the transaction is rolled back.
       setFailure(e);
@@ -173,6 +160,8 @@ export default function ImportModal({ props }: ModalComponentProps) {
       useUi.getState().closeModal();
     }
   };
+
+  const selected = IMPORT_KINDS.find((k) => k.id === kind) ?? IMPORT_KINDS[0]!;
 
   const footer =
     step === 'choose' ? (
@@ -217,7 +206,7 @@ export default function ImportModal({ props }: ModalComponentProps) {
         <div className="imp">
           <fieldset className="imp-kinds">
             <legend className="field-label">What do you want to import?</legend>
-            {KINDS.map((k) => (
+            {IMPORT_KINDS.map((k) => (
               <label key={k.id} className="imp-kind">
                 <input type="radio" name="import-kind" checked={kind === k.id} onChange={() => setKind(k.id)} />
                 <span>
@@ -226,13 +215,6 @@ export default function ImportModal({ props }: ModalComponentProps) {
                 </span>
               </label>
             ))}
-            <label className="imp-kind imp-kind-disabled" aria-disabled="true">
-              <input type="radio" name="import-kind" disabled />
-              <span>
-                <strong>OpenAPI (not implemented yet)</strong>
-                <span className="field-hint">OpenAPI / Swagger import is on the roadmap. Convert the spec to a Postman collection with another tool and import that file instead.</span>
-              </span>
-            </label>
           </fieldset>
 
           <div
@@ -254,7 +236,7 @@ export default function ImportModal({ props }: ModalComponentProps) {
               const text = e.clipboardData.getData('text');
               if (text.trim()) {
                 e.preventDefault();
-                void previewText('pasted.json', text);
+                void previewText(/^\s*[{[]/.test(text) ? 'pasted.json' : 'pasted.yaml', text);
               }
             }}
             onKeyDown={(e) => {
@@ -271,12 +253,12 @@ export default function ImportModal({ props }: ModalComponentProps) {
               </>
             ) : (
               <>
-                <strong>Drop a .json file here</strong>
-                <span>or click to choose a file, or focus this area and paste (Ctrl+V) the JSON text</span>
+                <strong>Drop a file here ({selected.extensions})</strong>
+                <span>or click to choose a file, or focus this area and paste (Ctrl+V) the file text</span>
               </>
             )}
           </div>
-          <p className="field-hint">Files are read locally and validated before anything is written. Nothing is uploaded.</p>
+          <p className="field-hint">Files are read locally and validated before anything is written. Nothing is uploaded; references to other files or URLs inside a document are never fetched.</p>
           {error && <ImportError message={error} warnings={errorWarnings} />}
         </div>
       )}
@@ -286,7 +268,7 @@ export default function ImportModal({ props }: ModalComponentProps) {
           <h3>Import preview</h3>
           <div className="imp-file field-hint">
             File: {preview.fileName}
-            {preview.schemaVersion ? ` · schema ${preview.schemaVersion}` : ''}
+            {preview.schemaVersion ? ` · version ${preview.schemaVersion}` : ''}
           </div>
           <ul className="imp-summary" aria-label="Import summary">
             {previewSummaryLines(preview).map((line, i) => (
@@ -302,6 +284,8 @@ export default function ImportModal({ props }: ModalComponentProps) {
             </Field>
           )}
           {preview.kind === 'aegis-backup' && <p className="field-hint">Restoring adds the backup contents to your data; existing items are not deleted.</p>}
+          {preview.kind === 'aegis-workspace' && <p className="field-hint">The workspace file is restored as a new workspace; existing workspaces are not changed.</p>}
+          {preview.kind !== 'aegis-backup' && preview.kind !== 'aegis-workspace' && <p className="field-hint">Everything is imported into the current workspace in one transaction. Unsupported parts are listed above and are never silently dropped.</p>}
           {error && <ImportError message={error} warnings={errorWarnings} noChange={failedAfterCommit} />}
         </div>
       )}

@@ -6,7 +6,7 @@ import { api, errorMessage } from '../lib/api';
 import { buildRows, dropPositionFromOffset, planNodeMove, type DropPosition, type MovePlan, type SidebarRow } from '../lib/collectionTree';
 import { useApp } from '../store/app';
 import { useUi } from '../store/ui';
-import { createCollection, createFolder, createRequest, deleteEntity, dropCollection, dropNode, duplicateEntity, ensureTree, renameEntity, setNodeExpanded } from './treeActions';
+import { createCollection, createFolder, createRequest, deleteEntity, dropCollection, dropNode, duplicateEntity, ensureTree, moveEntity, renameEntity, setNodeExpanded } from './treeActions';
 import '../styles/sidebar.css';
 
 const ROW_HEIGHT = 26;
@@ -139,6 +139,7 @@ export function CollectionsTree() {
           { label: 'Rename', separatorBefore: true, onSelect: () => void renameEntity('collection', row.id, row.id, row.name) },
           { label: 'Duplicate', onSelect: () => void duplicateEntity('collection', row.id, row.id) },
           { label: 'Edit…', onSelect: () => ui.openModal('collection-edit', { kind: 'collection', id: row.id }) },
+          { label: 'Find & Replace…', onSelect: () => ui.openModal('find-replace', { collectionId: row.id }) },
           { label: 'Run…', separatorBefore: true, onSelect: () => ui.openModal('runner', { collectionId: row.id }) },
           { label: 'Export…', onSelect: () => ui.openModal('export', { collectionId: row.id }) },
           { label: 'Delete', danger: true, separatorBefore: true, onSelect: () => void deleteEntity('collection', row.id, row.name, row.id) },
@@ -149,6 +150,8 @@ export function CollectionsTree() {
           { label: 'New Request', onSelect: () => void createRequest(row.collectionId, row.id) },
           { label: 'New Folder', onSelect: () => void createFolder(row.collectionId, row.id) },
           { label: 'Rename', separatorBefore: true, onSelect: () => void renameEntity('folder', row.id, row.collectionId, row.name) },
+          { label: 'Duplicate', onSelect: () => void duplicateEntity('folder', row.id, row.collectionId) },
+          { label: 'Move to…', onSelect: () => moveEntity('folder', row.id, row.collectionId, row.name) },
           { label: 'Edit…', onSelect: () => ui.openModal('collection-edit', { kind: 'folder', id: row.id }) },
           { label: 'Run…', separatorBefore: true, onSelect: () => ui.openModal('runner', { collectionId: row.collectionId, folderId: row.id }) },
           { label: 'Delete', danger: true, separatorBefore: true, onSelect: () => void deleteEntity('folder', row.id, row.name, row.collectionId) },
@@ -158,6 +161,7 @@ export function CollectionsTree() {
         { label: 'Open', onSelect: () => void openRequest(row.id) },
         { label: 'Rename', separatorBefore: true, onSelect: () => void renameEntity('request', row.id, row.collectionId, row.name) },
         { label: 'Duplicate', onSelect: () => void duplicateEntity('request', row.id, row.collectionId) },
+        { label: 'Move to…', onSelect: () => moveEntity('request', row.id, row.collectionId, row.name) },
         { label: 'Delete', danger: true, separatorBefore: true, onSelect: () => void deleteEntity('request', row.id, row.name, row.collectionId) },
       ];
     },
@@ -248,8 +252,10 @@ export function CollectionsTree() {
     if (filter.trim()) return null;
     const canContain = row.type !== 'request';
     const position: DropPosition = row.type === 'collection' ? 'inside' : dropPositionFromOffset(fraction, canContain);
-    const nodes = trees[d.collectionId];
-    if (!nodes || row.collectionId !== d.collectionId) return null;
+    // Drops into another collection are allowed. Its tree may not be loaded yet (collapsed collection):
+    // a drop on the collection row is then planned against an empty tree and `dropNode` loads it first.
+    const nodes = trees[row.collectionId] ?? (row.type === 'collection' ? [] : undefined);
+    if (!nodes) return null;
     // Validate with the same planner the drop uses.
     const plan = planPreview(nodes, d, row, position);
     return plan ? { id: row.id, position } : null;

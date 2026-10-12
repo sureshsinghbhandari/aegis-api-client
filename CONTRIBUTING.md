@@ -31,11 +31,17 @@ npm run test:e2e   # builds, then drives the real Electron app with Playwright
 * Docs describe **implemented** behaviour only. Use ✅ / 🟡 / 🔴 in README status tables; never claim "100% Postman
   compatible" — extend `docs/postman-compatibility/compatibility.md` only with features covered by tests.
 * Update `CHANGELOG.md` (Added / Changed / Fixed / Security / Documentation) for meaningful changes.
+* Feature guides live in `docs/features/*.md` (written by the engineers who build the feature); README status rows must
+  match them. Features not yet validated in a tagged release are marked 🟡 "in this release candidate - verify".
+* Never persist secrets from the renderer (`localStorage` tab restore strips them) and never read or write secret values
+  in bulk operations such as Find & Replace.
 
 ## Adding a protocol
 
-Implement `ProtocolClient` from `@aegis/core`, register it in the `ProtocolRegistry`, add an executor path and UI.
-Do not add protocol-specific fields to the HTTP request model.
+Implement `ProtocolClient` from `@aegis/core`. The interface and a `ProtocolRegistry` class exist, but nothing
+instantiates the registry yet: `RequestExecutor` calls `HttpProtocolClient` directly. A new protocol therefore needs an
+executor dispatch (and the registry wired into it) in addition to the client, IPC types/schemas and UI. Do not add
+protocol-specific fields to the HTTP request model. Note that GraphQL is a body mode sent over HTTP, not a protocol client.
 
 ## Never commit
 

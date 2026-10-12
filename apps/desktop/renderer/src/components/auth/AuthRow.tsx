@@ -2,6 +2,7 @@ import type { AuthConfig, AuthParamValue } from '@aegis/core';
 import type { ReactNode } from 'react';
 import { param } from './authModel';
 import { SecretField } from './SecretField';
+import { VariableInput } from '../VariableInput';
 
 export function AuthRow({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
@@ -23,7 +24,7 @@ export interface AuthFieldProps {
 export function TextParam({ auth, set, name, label, hint, placeholder }: AuthFieldProps & { name: string; label: string; hint?: string; placeholder?: string }) {
   return (
     <AuthRow label={label} {...(hint ? { hint } : {})}>
-      <input aria-label={label} value={param(auth, name)} placeholder={placeholder} spellCheck={false} onChange={(e) => set(name, e.target.value)} />
+      <VariableInput aria-label={label} value={param(auth, name)} placeholder={placeholder} onChange={(v) => set(name, v)} />
     </AuthRow>
   );
 }

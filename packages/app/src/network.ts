@@ -1,5 +1,6 @@
+import { isIP } from 'node:net';
 import { resolveProxyFromEnv, type NetworkLimits } from '@aegis/http-client';
-import type { ProxyOptions, TlsOptions } from '@aegis/core';
+import type { EnterprisePolicy, HostOverride, HttpVersionPreference, ProxyOptions, TlsOptions } from '@aegis/core';
 import type { AppContext } from './context';
 
 export const PROXY_PASSWORD_KEY = 'proxy:password';
@@ -8,6 +9,27 @@ export interface NetworkConfig {
   tls: TlsOptions;
   proxy?: ProxyOptions;
   limits: NetworkLimits;
+  /** Global HTTP version preference (per-request settings may override). */
+  httpVersion: HttpVersionPreference;
+  /** Host overrides (host -> IP literal) after policy filtering; empty when policy forbids them. */
+  hosts: Record<string, string>;
+  /** Only root for relative upload paths; undefined when not configured. */
+  workingDirectory?: string;
+  /** Notes for the Timeline / warnings (e.g. overrides ignored by policy). */
+  notes: string[];
+}
+
+/**
+ * Valid host overrides as a lookup map. Entries with an empty host or a non-IP address are dropped;
+ * when policy forbids overrides the map is empty and a note explains why (only if any were configured).
+ */
+export function resolveHostOverrides(entries: readonly HostOverride[], policy: EnterprisePolicy): { hosts: Record<string, string>; notes: string[] } {
+  const valid = entries.filter((e) => e && typeof e.host === 'string' && typeof e.address === 'string' && e.host.trim() !== '' && isIP(e.address.trim().replace(/^\[|\]$/g, '')) !== 0);
+  if (valid.length === 0) return { hosts: {}, notes: [] };
+  if (!policy.allowHostOverrides) return { hosts: {}, notes: ['Host overrides are configured but disabled by organization policy (allowHostOverrides); real DNS was used.'] };
+  const hosts: Record<string, string> = {};
+  for (const e of valid) hosts[e.host.trim().toLowerCase()] = e.address.trim().replace(/^\[|\]$/g, '');
+  return { hosts, notes: [] };
 }
 
 /** Parse a Chromium proxy string such as `PROXY host:3128; DIRECT`. */
@@ -53,6 +75,9 @@ export async function buildNetworkConfig(ctx: AppContext, url: string): Promise<
     proxy = fromOs ? { url: fromOs } : resolveProxyFromEnv(url);
   }
 
+  const overrides = resolveHostOverrides(settings.network.hosts ?? [], ctx.deps.policy.current);
+  const workingDirectory = (settings.files?.workingDirectory ?? '').trim();
+
   return {
     tls,
     ...(proxy ? { proxy } : {}),
@@ -63,5 +88,9 @@ export async function buildNetworkConfig(ctx: AppContext, url: string): Promise<
       maxResponseBytes: settings.network.maxResponseBytes,
       maxRequestBytes: settings.network.maxRequestBytes,
     },
+    httpVersion: settings.network.httpVersion ?? 'auto',
+    hosts: overrides.hosts,
+    ...(workingDirectory ? { workingDirectory } : {}),
+    notes: overrides.notes,
   };
 }

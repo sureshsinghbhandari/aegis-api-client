@@ -21,8 +21,28 @@ function checkSize(length: number, max: number): void {
   if (length > max) throw new AppError('REQUEST_TOO_LARGE', 'The request body exceeds the configured maximum request size.', { limit: max, size: length });
 }
 
-async function fileSize(filePath: string): Promise<number> {
-  const safe = assertSafeFilePath(filePath);
+export interface EncodeBodyOptions {
+  /**
+   * The only directory a RELATIVE file path (e.g. an imported Postman `src`) may resolve inside.
+   * Absolute paths chosen by the user are validated as before and are not restricted to it.
+   * Without it relative paths are rejected (`PATH_NOT_ALLOWED`).
+   */
+  workingDirectory?: string;
+}
+
+/** Validate an upload path: relative paths only inside the working directory, absolute paths with the usual checks. */
+export function resolveUploadPath(filePath: string, options: EncodeBodyOptions = {}): string {
+  if (typeof filePath !== 'string' || filePath === '') return assertSafeFilePath(filePath);
+  if (path.isAbsolute(filePath)) return assertSafeFilePath(filePath);
+  if (!options.workingDirectory) {
+    throw new AppError('PATH_NOT_ALLOWED', 'Relative file paths need a working directory (Settings → General → Working directory).', { path: filePath.slice(0, 200) });
+  }
+  const root = path.resolve(options.workingDirectory);
+  return assertSafeFilePath(filePath, { allowedRoots: [root] });
+}
+
+async function fileSize(filePath: string, options: EncodeBodyOptions): Promise<number> {
+  const safe = resolveUploadPath(filePath, options);
   try {
     const s = await stat(safe);
     if (!s.isFile()) throw new AppError('VALIDATION_FAILED', 'The selected path is not a file.', { path: path.basename(safe) });
@@ -34,7 +54,7 @@ async function fileSize(filePath: string): Promise<number> {
 }
 
 /** Convert a `BodySpec` to a sendable payload. Files are streamed from disk, never fully loaded. */
-export async function encodeBody(body: BodySpec, maxBytes: number): Promise<EncodedBody> {
+export async function encodeBody(body: BodySpec, maxBytes: number, options: EncodeBodyOptions = {}): Promise<EncodedBody> {
   switch (body.kind) {
     case 'none':
       return { length: 0, open: () => undefined };
@@ -50,9 +70,9 @@ export async function encodeBody(body: BodySpec, maxBytes: number): Promise<Enco
       return { contentType: 'application/x-www-form-urlencoded', length: buf.length, open: () => buf };
     }
     case 'file': {
-      const size = await fileSize(body.path);
+      const size = await fileSize(body.path, options);
       checkSize(size, maxBytes);
-      const safe = assertSafeFilePath(body.path);
+      const safe = resolveUploadPath(body.path, options);
       return { contentType: 'application/octet-stream', length: size, open: () => createReadStream(safe) };
     }
     case 'multipart': {
@@ -70,14 +90,14 @@ export async function encodeBody(body: BodySpec, maxBytes: number): Promise<Enco
           const tail = Buffer.from('\r\n');
           segments.push({ head, text, tail, length: head.length + text.length + tail.length });
         } else {
-          const size = await fileSize(part.path);
+          const size = await fileSize(part.path, options);
           const filename = part.filename ?? path.basename(part.path);
           const headers =
             `--${boundary}\r\nContent-Disposition: form-data; name="${escapeQuotes(part.name)}"; filename="${escapeQuotes(filename)}"` +
             `\r\nContent-Type: ${part.contentType ?? 'application/octet-stream'}\r\n\r\n`;
           const head = Buffer.from(headers, 'utf8');
           const tail = Buffer.from('\r\n');
-          segments.push({ head, tail, file: assertSafeFilePath(part.path), length: head.length + size + tail.length });
+          segments.push({ head, tail, file: resolveUploadPath(part.path, options), length: head.length + size + tail.length });
         }
         total += segments[segments.length - 1]!.length;
         checkSize(total, maxBytes);

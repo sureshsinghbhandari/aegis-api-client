@@ -89,8 +89,6 @@ function createPlatform(): PlatformBridge {
 
 function buildMenu(): void {
   const send = (action: string) => () => mainWindow?.webContents.send('menu:action', { action });
-  const unsupported = (what: string) => () =>
-    void dialog.showMessageBox(mainWindow ?? undefined!, { type: 'info', title: `${what} is not available yet`, message: `${what} is on the roadmap and is not implemented in this version.`, detail: 'See README → Known limitations.' });
   const template: MenuItemConstructorOptions[] = [
     {
       label: 'File',
@@ -103,7 +101,11 @@ function buildMenu(): void {
           submenu: [
             { label: 'Postman Collection…', accelerator: 'CmdOrCtrl+O', click: send('import-collection') },
             { label: 'Postman Environment…', click: send('import-environment') },
-            { label: 'OpenAPI…', click: unsupported('OpenAPI import') },
+            { label: 'OpenAPI / Swagger…', click: send('import-openapi') },
+            { label: 'HAR Archive…', click: send('import-har') },
+            { label: 'Insomnia Export…', click: send('import-insomnia') },
+            { label: 'Any Supported File (auto-detect)…', accelerator: 'CmdOrCtrl+Shift+O', click: send('import-auto') },
+            { type: 'separator' },
             { label: 'Backup…', click: send('import-backup') },
           ],
         },

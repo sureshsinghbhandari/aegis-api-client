@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppError, headerValue, type CookieJarHook } from '@aegis/core';
 import { HttpProtocolClient, resolveProxyFromEnv, shouldBypassProxy } from '@aegis/http-client';
-import { makeSpec, startHttpsServer, startServer, type TestServer } from '../helpers/http-server';
+import { makeSpec, startHttp2Server, startHttpsServer, startServer, type TestServer } from '../helpers/http-server';
 
 let server: TestServer;
 let tmp: string;
@@ -166,6 +166,109 @@ describe('HttpProtocolClient', () => {
     });
     await expect(blocking.send(makeSpec({ url: `${server.url}/echo` }))).rejects.toMatchObject({ code: 'POLICY_VIOLATION' });
   });
+
+  it('reports a real HTTP version and connection details for plain http (always HTTP/1.1)', async () => {
+    const res = await client.send(makeSpec({ url: `${server.url}/echo` }));
+    expect(res.httpVersion).toBe('HTTP/1.1');
+    expect(JSON.parse(text(res)).httpVersion).toBe('1.1');
+    expect(res.tls).toBeUndefined();
+    expect(res.connection).toMatchObject({ remoteAddress: '127.0.0.1', remotePort: server.port, reused: false });
+    expect(res.timings.dnsMs).toBe(0); // IP literal: no lookup
+    expect(res.timings.connectMs).toBeGreaterThanOrEqual(0);
+    expect(res.timings.tlsMs).toBe(0);
+    const forced2 = await client.send(makeSpec({ url: `${server.url}/echo`, httpVersion: '2' }));
+    expect(forced2.httpVersion).toBe('HTTP/1.1');
+    expect(forced2.notes.join(' ')).toMatch(/only negotiated over TLS/);
+  });
+});
+
+describe('request settings (Postman protocolProfileBehavior parity)', () => {
+  it('disableCookies skips the jar in both directions', async () => {
+    const jar = new Map<string, string>();
+    const hook: CookieJarHook = {
+      getCookieHeader: () => (jar.size ? [...jar].map(([k, v]) => `${k}=${v}`).join('; ') : undefined),
+      storeSetCookies: (_url, list) => {
+        for (const c of list) {
+          const [k, v] = c.split(';')[0]!.split('=');
+          jar.set(k!, v!);
+        }
+      },
+    };
+    const jarClient = new HttpProtocolClient({ cookies: hook });
+    const set = await jarClient.send(makeSpec({ url: `${server.url}/cookie-set`, disableCookies: true }));
+    expect(set.setCookies).toHaveLength(2); // still reported to the UI
+    expect(jar.size).toBe(0); // but not stored
+    expect(set.notes.join(' ')).toContain('Cookie jar disabled');
+    jar.set('sid', 'from-jar');
+    const echo = await jarClient.send(makeSpec({ url: `${server.url}/cookie-echo`, disableCookies: true }));
+    expect(JSON.parse(text(echo)).cookie).toBeNull();
+    const normal = await jarClient.send(makeSpec({ url: `${server.url}/cookie-echo` }));
+    expect(JSON.parse(text(normal)).cookie).toBe('sid=from-jar');
+  });
+
+  it('followOriginalHttpMethod keeps POST + body on 302/303', async () => {
+    const r = await client.send(makeSpec({ url: `${server.url}/redirect/1?code=303`, method: 'POST', followOriginalHttpMethod: true, body: { kind: 'text', text: 'payload' } }));
+    const j = JSON.parse(text(r));
+    expect(j.method).toBe('POST');
+    expect(j.body).toBe('payload');
+    expect(r.notes.join(' ')).toMatch(/Kept POST/);
+  });
+
+  it('followAuthorizationHeader forwards Authorization cross-origin (off by default) and flags it', async () => {
+    const target = `${server.url.replace('127.0.0.1', 'localhost')}/redirect/0`;
+    const spec = () => makeSpec({ url: `${server.url}/redirect-abs?to=${encodeURIComponent(target)}`, headers: [{ name: 'Authorization', value: 'Bearer secret' }, { name: 'Cookie', value: 'a=b' }] });
+    const kept = await client.send({ ...spec(), followAuthorizationHeader: true });
+    const j = JSON.parse(text(kept));
+    expect(j.headers.authorization).toBe('Bearer secret');
+    expect(j.headers.cookie).toBeUndefined(); // cookies are never forwarded cross-origin
+    expect(kept.notes.some((n) => n.startsWith('WARNING') && /Authorization header was forwarded/.test(n))).toBe(true);
+    const dropped = await client.send(spec());
+    expect(JSON.parse(text(dropped)).headers.authorization).toBeUndefined();
+  });
+
+  it('removeRefererHeaderOnRedirect strips Referer only when enabled', async () => {
+    const spec = () => makeSpec({ url: `${server.url}/redirect/1`, headers: [{ name: 'Referer', value: 'https://app.test/page' }] });
+    expect(JSON.parse(text(await client.send(spec()))).headers.referer).toBe('https://app.test/page');
+    const stripped = await client.send({ ...spec(), removeRefererHeaderOnRedirect: true });
+    expect(JSON.parse(text(stripped)).headers.referer).toBeUndefined();
+    expect(stripped.notes.join(' ')).toContain('Referer header removed');
+  });
+
+  it('hosts override connects to the mapped address while keeping the Host header, and is noted', async () => {
+    const res = await client.send(makeSpec({ url: `http://aegis-override.test:${server.port}/host`, hosts: { 'aegis-override.test': '127.0.0.1' } }));
+    expect(res.status).toBe(200);
+    expect(JSON.parse(text(res)).host).toBe(`aegis-override.test:${server.port}`);
+    expect(res.connection).toMatchObject({ remoteAddress: '127.0.0.1', hostOverride: '127.0.0.1' });
+    expect(res.notes.join(' ')).toContain('resolved via hosts override');
+    // without the override the name does not resolve
+    await expect(client.send(makeSpec({ url: `http://aegis-override.test:${server.port}/host` }))).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+  });
+
+  it('relative upload paths resolve only inside the working directory', async () => {
+    writeFileSync(path.join(tmp, 'rel.bin'), Buffer.alloc(1000, 1));
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'aegis-outside-'));
+    writeFileSync(path.join(outside, 'secret.txt'), 'nope');
+    try {
+      const ok = await client.send(makeSpec({ url: `${server.url}/echo`, method: 'POST', workingDirectory: tmp, body: { kind: 'multipart', parts: [{ kind: 'file', name: 'f', path: 'rel.bin' }] } }));
+      expect(JSON.parse(text(ok)).body).toContain('filename="rel.bin"');
+      // no working directory: relative paths are rejected
+      await expect(client.send(makeSpec({ url: `${server.url}/echo`, method: 'POST', body: { kind: 'file', path: 'rel.bin' } }))).rejects.toMatchObject({ code: 'PATH_NOT_ALLOWED' });
+      // traversal out of the working directory is rejected
+      const escape = path.join('..', path.basename(outside), 'secret.txt');
+      await expect(client.send(makeSpec({ url: `${server.url}/echo`, method: 'POST', workingDirectory: tmp, body: { kind: 'file', path: escape } }))).rejects.toMatchObject({ code: 'PATH_NOT_ALLOWED' });
+      // absolute paths chosen by the user are not restricted to the working directory
+      const abs = await client.send(makeSpec({ url: `${server.url}/echo`, method: 'PUT', workingDirectory: tmp, body: { kind: 'file', path: path.join(outside, 'secret.txt') } }));
+      expect(JSON.parse(text(abs)).body).toBe('nope');
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('the digest route challenges unauthenticated requests (used by the Digest provider tests)', async () => {
+    const res = await client.send(makeSpec({ url: `${server.url}/digest/md5` }));
+    expect(res.status).toBe(401);
+    expect(headerValue(res.headers, 'www-authenticate')).toMatch(/^Digest realm="metrics", qop="auth", nonce="[0-9a-f]+".*algorithm=MD5/);
+  });
 });
 
 describe('proxy helpers', () => {
@@ -222,5 +325,59 @@ describe('TLS', () => {
     const insecure = await client.send(makeSpec({ url: `${tls.url}/echo`, tls: { rejectUnauthorized: false } }));
     expect(insecure.status).toBe(200);
     expect(insecure.notes.join(' ')).toContain('certificate validation is disabled');
+    expect(insecure.tls?.authorized).toBe(false);
+    expect(trusted.tls?.authorized).toBe(true);
+  });
+
+  it('exposes TLS protocol, cipher, peer certificate and handshake timing (https, HTTP/1.1 server)', async (ctx) => {
+    if (!tls) return ctx.skip();
+    const res = await client.send(makeSpec({ url: `${tls.url}/echo`, tls: { rejectUnauthorized: true, ca: [cert] } }));
+    expect(res.httpVersion).toBe('HTTP/1.1');
+    expect(res.tls).toBeDefined();
+    expect(res.tls!.protocol).toMatch(/^TLSv1\.[23]$/);
+    expect(res.tls!.cipher).toMatch(/AES|CHACHA/);
+    expect(res.tls!.alpn).toBe('http/1.1');
+    expect(res.tls!.peerCertificate).toMatchObject({ subject: expect.stringContaining('CN=127.0.0.1'), issuer: expect.stringContaining('CN=127.0.0.1') });
+    expect(res.tls!.peerCertificate!.fingerprint).toMatch(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+    expect(new Date(res.tls!.peerCertificate!.validTo).getTime()).toBeGreaterThan(Date.now());
+    expect(res.timings.tlsMs).toBeGreaterThanOrEqual(0);
+    expect(res.timings.connectMs).toBeGreaterThanOrEqual(0);
+    expect(res.timings.waitingMs).toBeGreaterThanOrEqual(0);
+  });
+
+  describe('HTTP/2', () => {
+    let h2: TestServer | undefined;
+    beforeAll(async () => {
+      if (tls) h2 = await startHttp2Server(key, cert);
+    });
+    afterAll(async () => h2?.close());
+
+    it('negotiates HTTP/2 via ALPN by default and reports it', async (ctx) => {
+      if (!h2) return ctx.skip();
+      const res = await client.send(makeSpec({ url: `${h2.url}/echo?x=1`, tls: { rejectUnauthorized: true, ca: [cert] } }));
+      expect(res.status).toBe(200);
+      expect(res.httpVersion).toBe('HTTP/2');
+      expect(res.tls?.alpn).toBe('h2');
+      const j = JSON.parse(text(res));
+      expect(j.httpVersion).toBe('2.0');
+      expect(j.path).toBe('/echo?x=1');
+    });
+
+    it('sends bodies and follows redirects over HTTP/2', async (ctx) => {
+      if (!h2) return ctx.skip();
+      const post = await client.send(makeSpec({ url: `${h2.url}/echo`, method: 'POST', tls: { rejectUnauthorized: true, ca: [cert] }, body: { kind: 'text', text: '{"h2":true}' }, headers: [{ name: 'Content-Type', value: 'application/json' }] }));
+      expect(JSON.parse(text(post)).body).toBe('{"h2":true}');
+      const redirected = await client.send(makeSpec({ url: `${h2.url}/redirect/2`, tls: { rejectUnauthorized: true, ca: [cert] } }));
+      expect(redirected.redirects).toHaveLength(2);
+      expect(redirected.httpVersion).toBe('HTTP/2');
+    });
+
+    it('a per-request "HTTP/1.1" preference forces HTTP/1.1 on the same server', async (ctx) => {
+      if (!h2) return ctx.skip();
+      const res = await client.send(makeSpec({ url: `${h2.url}/echo`, httpVersion: '1.1', tls: { rejectUnauthorized: true, ca: [cert] } }));
+      expect(res.httpVersion).toBe('HTTP/1.1');
+      expect(res.tls?.alpn).toBe('http/1.1');
+      expect(JSON.parse(text(res)).httpVersion).toBe('1.1');
+    });
   });
 });

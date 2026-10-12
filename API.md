@@ -49,6 +49,7 @@ Collections: CRUD, duplicate, reorder, lazy tree (flat rows), global search.
 | `collections.reorder` | `window.api.collections.reorder(args)` |
 | `collections.tree` | `window.api.collections.tree(args)` |
 | `collections.search` | `window.api.collections.search(args)` |
+| `collections.findReplace` | `window.api.collections.findReplace(args)` — preview (`apply: false`) or apply find & replace across one collection (`collectionId`) or a whole workspace (`workspaceId`); literal, whole-word or bounded regex; one transaction, `secretref:` values, secret variables and auth credentials skipped, audited as `FIND_REPLACE` (counts only, never values); returns per-scope counts, a summary and capped before/after samples |
 
 ## `folders`
 
@@ -60,6 +61,7 @@ Nested folders with folder-level auth and scripts.
 | `folders.create` | `window.api.folders.create(args)` |
 | `folders.update` | `window.api.folders.update(args)` |
 | `folders.delete` | `window.api.folders.delete(args)` |
+| `folders.duplicate` | `window.api.folders.duplicate(args)` — deep copy next to the original (sub-folders, requests, scripts, variables, auth re-vaulted) |
 
 ## `requests`
 
@@ -72,7 +74,7 @@ Requests: CRUD, duplicate, move/reorder, effective (inherited) auth.
 | `requests.save` | `window.api.requests.save(args)` |
 | `requests.delete` | `window.api.requests.delete(args)` |
 | `requests.duplicate` | `window.api.requests.duplicate(args)` |
-| `requests.move` | `window.api.requests.move(args)` |
+| `requests.move` | `window.api.requests.move(args)` — optional `collectionId` moves a request or folder (with its subtree) into another collection |
 | `requests.effectiveAuth` | `window.api.requests.effectiveAuth(args)` |
 
 ## `environments`
@@ -133,6 +135,7 @@ Paginated history search, replay, save to collection, delete/clear.
 ## `runner`
 
 Collection runner: start/stop, iteration data, results. Progress arrives as `runner:item` / `runner:done` events.
+`runner.start` accepts `requestIds` (run only these requests, in this order) and `keepResponses` (store a redacted response head per item: status, non-sensitive headers, first 64 KiB of the body; `runner.items` and `runner:item` then carry `response`).
 
 | Channel | Window API |
 | --- | --- |
@@ -144,6 +147,7 @@ Collection runner: start/stop, iteration data, results. Progress arrives as `run
 ## `importExport`
 
 Postman import (preview → commit, transactional), Postman v2.1 / environment export, backups.
+`pickAndPreview` / `previewContent` take `kind`: `postman-collection`, `postman-environment`, `backup`, `openapi` (OpenAPI 3.x + Swagger 2.0, JSON/YAML), `har`, `insomnia`, `postman-v1`, `postman-dump`, `aegis-workspace` or `auto` (content-based detection); the preview's `kind` reports what was found. `createBackup` takes an optional `historyLimit` (newest history rows per workspace, default 500, max 100000).
 
 | Channel | Window API |
 | --- | --- |
@@ -176,6 +180,8 @@ Cookie jar manager.
 | `cookies.reveal` | `window.api.cookies.reveal(args)` |
 | `cookies.delete` | `window.api.cookies.delete(args)` |
 | `cookies.clear` | `window.api.cookies.clear(args)` |
+| `cookies.add` | `window.api.cookies.add(args)` — add a cookie by hand; the value is stored in the vault |
+| `cookies.update` | `window.api.cookies.update(args)` — edit attributes and/or value (omit `value` to keep it) |
 
 ## `certificates`
 
@@ -184,7 +190,7 @@ Custom CA and client certificates for mutual TLS.
 | Channel | Window API |
 | --- | --- |
 | `certificates.list` | `window.api.certificates.list(args)` |
-| `certificates.add` | `window.api.certificates.add(args)` |
+| `certificates.add` | `window.api.certificates.add(args)` — PEM (`certPem` + `keyPem`) or PKCS#12 (`pfxBase64`, or `pfxPath` read by the main process, 2 MiB cap); keys, bundles and passphrases go to the vault |
 | `certificates.pickFile` | `window.api.certificates.pickFile(args)` |
 | `certificates.setEnabled` | `window.api.certificates.setEnabled(args)` |
 | `certificates.delete` | `window.api.certificates.delete(args)` |
@@ -205,7 +211,9 @@ JWT decode, file pickers, interactive OAuth 2.0 token acquisition.
 | --- | --- |
 | `tools.decodeJwt` | `window.api.tools.decodeJwt(args)` |
 | `tools.pickFile` | `window.api.tools.pickFile(args)` |
-| `tools.oauth2GetToken` | `window.api.tools.oauth2GetToken(args)` |
+| `tools.oauth2GetToken` | `window.api.tools.oauth2GetToken(args)` — resolves `{{variables}}` with the request's collection/folder scopes as well as environment and globals; optional `cancelId` makes the flow abortable via `execution.cancel({ executionId: cancelId })` |
+| `tools.oauth2DeviceStart` | `window.api.tools.oauth2DeviceStart(args)` — OAuth 2.0 device flow (RFC 8628) step 1: returns `deviceCode` (keep in memory), `userCode`, `verificationUri`, `interval` |
+| `tools.oauth2DevicePoll` | `window.api.tools.oauth2DevicePoll(args)` — step 2: one poll of the token endpoint; `{ status: 'pending', interval }` or `{ status: 'done', params }`. Cancel by not polling again. Token/device endpoints go through the same policy host check as requests |
 
 ## Example
 

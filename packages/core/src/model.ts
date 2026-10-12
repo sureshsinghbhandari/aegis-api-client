@@ -4,6 +4,8 @@
  * no database concerns beyond ids/timestamps.
  */
 
+import type { HttpVersionPreference } from './settings';
+
 export type ID = string;
 
 export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT'] as const;
@@ -17,8 +19,15 @@ export interface KeyValueEntry {
   enabled: boolean;
 }
 
-export type BodyMode = 'none' | 'raw' | 'urlencoded' | 'formdata' | 'binary';
+export type BodyMode = 'none' | 'raw' | 'urlencoded' | 'formdata' | 'binary' | 'graphql';
 export type RawLanguage = 'json' | 'xml' | 'text' | 'html' | 'javascript';
+
+/** GraphQL body: sent as `application/json` `{ query, variables, operationName }`. `variables` is JSON text (may be empty). */
+export interface GraphQLBody {
+  query: string;
+  variables: string;
+  operationName?: string;
+}
 
 export interface FormDataEntry {
   key: string;
@@ -42,9 +51,17 @@ export interface RequestBody {
   filePath?: string;
   formData?: FormDataEntry[];
   urlencoded?: KeyValueEntry[];
+  /** For `graphql` mode. */
+  graphql?: GraphQLBody;
 }
 
 export type AuthType = 'inherit' | 'none' | 'basic' | 'bearer' | 'apikey' | 'oauth2' | 'oauth1' | 'jwt' | 'awsv4' | 'custom';
+
+/**
+ * Postman auth types that import as `custom` (with `params.providerId` = the original type)
+ * but are executable by the authentication package. The UI edits them like native types.
+ */
+export const EXECUTABLE_CUSTOM_AUTH_PROVIDERS: readonly string[] = ['digest', 'hawk', 'edgegrid', 'asap'];
 
 export type AuthParamValue = string | number | boolean;
 
@@ -65,9 +82,13 @@ export const AUTH_SECRET_PARAMS: Record<string, readonly string[]> = {
   bearer: ['token'],
   apikey: ['value'],
   oauth2: ['clientSecret', 'accessToken', 'refreshToken', 'password', 'code_verifier'],
-  oauth1: ['consumerSecret', 'tokenSecret'],
+  oauth1: ['consumerSecret', 'tokenSecret', 'privateKey'],
   jwt: ['secret', 'privateKey'],
   awsv4: ['secretKey', 'sessionToken'],
+  digest: ['password'],
+  hawk: ['authKey'],
+  edgegrid: ['clientSecret', 'accessToken'],
+  asap: ['privateKey'],
 };
 
 /** True when the whole string consists of `{{variable}}` references (i.e. is not itself a literal credential). */
@@ -103,9 +124,22 @@ export interface RequestSettings {
   timeoutMs?: number;
   followRedirects?: boolean;
   maxRedirects?: number;
-  /** Only honored if enterprise policy permits. */
+  /** Only honored if enterprise policy permits (`allowInsecureTls`); otherwise shown as enforced. */
   verifyTls?: boolean;
+  /** Clamped by the global setting and policy. */
   maxResponseBytes?: number;
+  /** Do not send or store cookies from the workspace jar for this request (Postman `disableCookies`). */
+  disableCookies?: boolean;
+  /** `false` sends the URL/query as typed, without percent-encoding (Postman `disableUrlEncoding`). Default true. */
+  encodeUrl?: boolean;
+  /** Keep the original method and body on 301/302/303 instead of switching to GET (Postman `followOriginalHttpMethod`). */
+  followOriginalHttpMethod?: boolean;
+  /** Keep the Authorization header when a redirect leaves the origin. Default false (surfaced as a warning when on). */
+  followAuthorizationHeader?: boolean;
+  /** Strip a Referer header when following redirects (Postman `removeRefererHeaderOnRedirect`). */
+  removeRefererHeaderOnRedirect?: boolean;
+  /** Per-request HTTP version preference; overrides `settings.network.httpVersion`. */
+  httpVersion?: HttpVersionPreference;
 }
 
 /** A request without database identity. Used by import/export. */

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { KeyValueBulkTable } from '../components/BulkEditor';
 import { KeyValueTable } from '../components/ui';
 import type { OpenTab } from '../store/app';
 import { useDraftUpdate } from './useDraft';
@@ -36,13 +37,12 @@ export function ParamsTab({ tab }: { tab: OpenTab }) {
   const { draft } = tab;
   return (
     <div className="wb-pane-scroll">
-      <h3 className="wb-h">Query Params</h3>
-      <KeyValueTable rows={draft.queryParams} onChange={(queryParams) => update({ queryParams })} keyPlaceholder="Parameter" />
+      <KeyValueBulkTable title="Query Params" label="Query params" rows={draft.queryParams} onChange={(queryParams) => update({ queryParams })} keyPlaceholder="Parameter" variableHints />
       <h3 className="wb-h">Path Variables</h3>
       {draft.pathVariables.length === 0 ? (
         <p className="wb-hint">Add <code>:name</code> segments to the URL path (for example <code>/users/:id</code>) to define path variables here.</p>
       ) : (
-        <KeyValueTable rows={draft.pathVariables} onChange={(pathVariables) => update({ pathVariables })} keyPlaceholder="Variable" readOnlyKeys />
+        <KeyValueTable rows={draft.pathVariables} onChange={(pathVariables) => update({ pathVariables })} keyPlaceholder="Variable" readOnlyKeys variableHints />
       )}
     </div>
   );
@@ -53,7 +53,7 @@ export function HeadersTab({ tab }: { tab: OpenTab }) {
   const [hintOpen, setHintOpen] = useState(false);
   return (
     <div className="wb-pane-scroll">
-      <KeyValueTable rows={tab.draft.headers} onChange={(headers) => update({ headers })} keyPlaceholder="Header" keySuggestions={COMMON_HEADERS} />
+      <KeyValueBulkTable label="Headers" rows={tab.draft.headers} onChange={(headers) => update({ headers })} keyPlaceholder="Header" keySuggestions={COMMON_HEADERS} variableHints />
       <div className="wb-autohdr">
         <button type="button" className="btn btn-ghost btn-sm" aria-expanded={hintOpen} onClick={() => setHintOpen((v) => !v)}>
           {hintOpen ? '▾' : '▸'} Automatically added headers

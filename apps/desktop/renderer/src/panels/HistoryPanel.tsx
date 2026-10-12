@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { newId, type HistoryItem, type TreeNode } from '@aegis/core';
+import { HTTP_METHODS, newId, type HistoryItem, type TreeNode } from '@aegis/core';
 import { api, errorMessage } from '../lib/api';
 import { withProductionConfirm } from '../lib/confirm-production';
 import { folderOptions } from '../lib/tree-helpers';
@@ -162,7 +162,7 @@ export default function HistoryPanel() {
         <div className="panel-row">
           <select aria-label="Filter by method" value={method} onChange={(e) => setMethod(e.target.value)}>
             <option value="">All methods</option>
-            {['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].map((m) => (
+            {HTTP_METHODS.map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>

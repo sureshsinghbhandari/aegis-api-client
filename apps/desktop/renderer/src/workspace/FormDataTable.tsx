@@ -2,6 +2,7 @@ import type { FormDataEntry } from '@aegis/core';
 import { api, errorMessage } from '../lib/api';
 import { useApp } from '../store/app';
 import { formatBytes } from '../components/ui';
+import { VariableInput } from '../components/VariableInput';
 
 const EMPTY: FormDataEntry = { key: '', type: 'text', value: '', enabled: true };
 
@@ -36,7 +37,7 @@ export function FormDataTable({ rows, onChange }: { rows: FormDataEntry[]; onCha
         return (
           <div key={i} className={`kv-row fd-row ${r.enabled ? '' : 'disabled'}`}>
             <input type="checkbox" aria-label="Enabled" checked={r.enabled} disabled={ghost} onChange={(e) => patch(i, { enabled: e.target.checked })} />
-            <input value={r.key} placeholder="Key" spellCheck={false} onChange={(e) => patch(i, { key: e.target.value })} />
+            <VariableInput value={r.key} placeholder="Key" onChange={(key) => patch(i, { key })} />
             <select aria-label="Field type" value={r.type} onChange={(e) => patch(i, { type: e.target.value as FormDataEntry['type'], ...(e.target.value !== 'file' ? { filePath: '' } : {}) })}>
               <option value="text">Text</option>
               <option value="file">File</option>
@@ -52,7 +53,7 @@ export function FormDataTable({ rows, onChange }: { rows: FormDataEntry[]; onCha
                 </span>
               </div>
             ) : (
-              <input value={r.value} placeholder={r.type === 'variable' ? 'Variable name' : 'Value'} spellCheck={false} onChange={(e) => patch(i, { value: e.target.value })} />
+              <VariableInput value={r.value} placeholder={r.type === 'variable' ? 'Variable name' : 'Value'} onChange={(value) => patch(i, { value })} />
             )}
             <button type="button" className="icon-btn" aria-label="Remove row" disabled={ghost} onClick={() => onChange(rows.filter((_, idx) => idx !== i))}>
               ✕

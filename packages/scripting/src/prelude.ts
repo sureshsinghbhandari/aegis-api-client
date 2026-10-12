@@ -1,5 +1,6 @@
 import { GUEST_BUILTINS, GUEST_SHIMS } from './guest/builtins';
 import { GUEST_CORE } from './guest/core';
+import { GUEST_LIBS } from './guest/libs';
 import { GUEST_PM } from './guest/pm';
 import { GUEST_REQUEST } from './guest/request';
 import { GUEST_RESPONSE } from './guest/response';
@@ -24,6 +25,7 @@ export const PRELUDE_SOURCE: string =
   GUEST_CORE +
   GUEST_REQUEST +
   GUEST_RESPONSE +
+  GUEST_LIBS +
   GUEST_PM +
   '\n})';
 

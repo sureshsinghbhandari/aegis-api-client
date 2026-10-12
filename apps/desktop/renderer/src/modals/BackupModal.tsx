@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { BackupInfo } from '@aegis/core';
+import { BACKUP_HISTORY_LIMIT_DEFAULT, BACKUP_HISTORY_LIMIT_MAX, type BackupInfo } from '@aegis/core';
 import { api, errorMessage } from '../lib/api';
 import { describeBackupSecrets, validateBackupPassphrase } from '../lib/backup-helpers';
 import { relativeTime } from '../lib/ui-format';
@@ -12,6 +12,7 @@ import '../styles/panels.css';
 export default function BackupModal(_p: ModalComponentProps) {
   const info = useApp((s) => s.info);
   const [includeHistory, setIncludeHistory] = useState(false);
+  const [historyLimit, setHistoryLimit] = useState(String(BACKUP_HISTORY_LIMIT_DEFAULT));
   const [passphrase, setPassphrase] = useState('');
   const [confirm, setConfirm] = useState('');
   const [backups, setBackups] = useState<BackupInfo[] | null>(null);
@@ -35,16 +36,18 @@ export default function BackupModal(_p: ModalComponentProps) {
   }, [loadList]);
 
   const passError = validateBackupPassphrase(passphrase, confirm);
+  const limitN = /^\d{1,6}$/.test(historyLimit.trim()) && Number(historyLimit) <= BACKUP_HISTORY_LIMIT_MAX ? Number(historyLimit) : null;
+  const limitError = includeHistory && limitN === null ? `Enter a whole number from 0 to ${BACKUP_HISTORY_LIMIT_MAX.toLocaleString('en-US')}.` : null;
   const secretNote = describeBackupSecrets(passphrase, info?.policy.allowSecretExport ?? false);
 
   const create = async () => {
-    if (passError) return;
+    if (passError || limitError) return;
     setBusy(true);
     setError(null);
     setCreated(null);
     setCancelled(false);
     try {
-      const b = await api.importExport.createBackup({ includeHistory, ...(passphrase ? { passphrase } : {}) });
+      const b = await api.importExport.createBackup({ includeHistory, ...(includeHistory && limitN !== null ? { historyLimit: limitN } : {}), ...(passphrase ? { passphrase } : {}) });
       if (b) {
         setCreated(b);
         setPassphrase('');
@@ -78,6 +81,11 @@ export default function BackupModal(_p: ModalComponentProps) {
         <h3>Create backup</h3>
         <p className="field-hint">A backup contains your workspaces, collections and environments as one file. It is stored locally; nothing is uploaded.</p>
         <Checkbox checked={includeHistory} onChange={setIncludeHistory} label="Include request history" />
+        {includeHistory && (
+          <Field label="History entries per workspace (newest first)" hint={limitError ?? `Default ${BACKUP_HISTORY_LIMIT_DEFAULT.toLocaleString('en-US')}, at most ${BACKUP_HISTORY_LIMIT_MAX.toLocaleString('en-US')}. Older entries are not included in the backup.`}>
+            <input value={historyLimit} inputMode="numeric" onChange={(e) => setHistoryLimit(e.target.value)} aria-invalid={limitN === null} />
+          </Field>
+        )}
         <div className="env-details-grid" style={{ marginTop: 12 }}>
           <Field label="Passphrase (optional)">
             <input type="password" autoComplete="new-password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} />
@@ -92,7 +100,7 @@ export default function BackupModal(_p: ModalComponentProps) {
           </div>
         )}
         <p className="field-hint">{secretNote}</p>
-        <Button variant="primary" disabled={busy || passError !== null} onClick={() => void create()}>
+        <Button variant="primary" disabled={busy || passError !== null || limitError !== null} onClick={() => void create()}>
           {busy ? 'Creating…' : 'Create backup…'}
         </Button>
         {error && <ErrorBanner message={error} />}

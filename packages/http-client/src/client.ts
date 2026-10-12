@@ -18,6 +18,7 @@ import {
   type RedirectHop,
 } from '@aegis/core';
 import { encodeBody } from './body';
+import { createTimedConnector, type ObservedConnection } from './connector';
 import { shouldBypassProxy } from './proxy';
 
 const DEFAULT_SPILL_BYTES = 8 * 1024 * 1024;
@@ -27,6 +28,12 @@ export interface HttpClientHooks {
   cookies?: CookieJarHook;
   /** Called before each hop; throw to block (policy: blocked hosts, local-only, ...). */
   beforeRequest?(url: URL): void | Promise<void>;
+}
+
+/** Per-send state shared between hops: dispatchers per origin/proxy and every connection they opened. */
+interface SendState {
+  dispatchers: Map<string, Dispatcher>;
+  connections: ObservedConnection[];
 }
 
 export class HttpProtocolClient implements ProtocolClient<HttpRequestSpec, HttpResponse> {
@@ -49,24 +56,24 @@ export class HttpProtocolClient implements ProtocolClient<HttpRequestSpec, HttpR
     const controller = new AbortController();
     this.inflight.set(spec.id, controller);
     const timer = setTimeout(() => controller.abort(new AppError('REQUEST_TIMEOUT', `The request timed out after ${spec.timeoutMs} ms.`, { timeoutMs: spec.timeoutMs })), spec.timeoutMs);
-    const dispatchers = new Map<string, Dispatcher>();
+    const state: SendState = { dispatchers: new Map(), connections: [] };
     try {
-      return await this.execute(spec, controller.signal, dispatchers, hooks);
+      return await this.execute(spec, controller.signal, state, hooks);
     } catch (error) {
       throw this.mapError(error, controller.signal, spec);
     } finally {
       clearTimeout(timer);
       this.inflight.delete(spec.id);
-      await Promise.all([...dispatchers.values()].map((d) => d.close().catch(() => undefined)));
+      await Promise.all([...state.dispatchers.values()].map((d) => d.close().catch(() => undefined)));
     }
   }
 
   // ------------------------------------------------------------------ internals
 
-  private dispatcherFor(spec: HttpRequestSpec, url: URL, cache: Map<string, Dispatcher>, notes: string[]): Dispatcher {
+  private dispatcherFor(spec: HttpRequestSpec, url: URL, state: SendState, notes: string[]): Dispatcher {
     const proxy = spec.proxy && !shouldBypassProxy(url.href, spec.proxy.noProxy) ? spec.proxy : undefined;
     const key = `${url.origin}|${proxy?.url ?? ''}`;
-    const existing = cache.get(key);
+    const existing = state.dispatchers.get(key);
     if (existing) return existing;
     const tls = spec.tls;
     const tlsOptions: Record<string, unknown> = { rejectUnauthorized: tls.rejectUnauthorized };
@@ -81,24 +88,42 @@ export class HttpProtocolClient implements ProtocolClient<HttpRequestSpec, HttpR
       if (cc.passphrase) tlsOptions.passphrase = cc.passphrase;
     }
     if (!tls.rejectUnauthorized) notes.push('WARNING: TLS certificate validation is disabled for this request.');
-    if (cc && url.protocol === 'https:') notes.push('Client certificate attached.');
+    if (cc && url.protocol === 'https:') notes.push(`Client certificate attached${cc.pfxBase64 ? ' (PKCS#12)' : ''}.`);
+    const version = spec.httpVersion ?? 'auto';
+    const allowH2 = version !== '1.1';
     let dispatcher: Dispatcher;
     if (proxy) {
       const token = proxy.username ? `Basic ${Buffer.from(`${proxy.username}:${proxy.password ?? ''}`).toString('base64')}` : undefined;
-      dispatcher = new ProxyAgent({ uri: proxy.url, ...(token ? { token } : {}), requestTls: tlsOptions, proxyTls: { rejectUnauthorized: tls.rejectUnauthorized, ...(tls.ca?.length ? { ca: tls.ca } : {}) } });
+      dispatcher = new ProxyAgent({
+        uri: proxy.url,
+        ...(token ? { token } : {}),
+        allowH2,
+        requestTls: { ...tlsOptions, allowH2 },
+        proxyTls: { rejectUnauthorized: tls.rejectUnauthorized, ...(tls.ca?.length ? { ca: tls.ca } : {}) },
+      });
       notes.push(`Via proxy ${new URL(proxy.url).host}.`);
+      if (spec.hosts && Object.keys(spec.hosts).length) notes.push('Hosts overrides do not apply to proxied requests (the proxy resolves the name).');
     } else {
-      dispatcher = new Agent({ connect: tlsOptions, keepAliveTimeout: 1, keepAliveMaxTimeout: 1 });
+      const connect = createTimedConnector({
+        tls: tlsOptions,
+        allowH2,
+        ...(version === '2' ? { preferH2: true } : {}),
+        ...(spec.hosts ? { hosts: spec.hosts } : {}),
+        onConnection: (info) => state.connections.push(info),
+      });
+      dispatcher = new Agent({ connect, allowH2, keepAliveTimeout: 1, keepAliveMaxTimeout: 1 });
     }
-    cache.set(key, dispatcher);
+    state.dispatchers.set(key, dispatcher);
     return dispatcher;
   }
 
-  private async execute(spec: HttpRequestSpec, signal: AbortSignal, dispatchers: Map<string, Dispatcher>, hooks: HttpClientHooks): Promise<HttpResponse> {
+  private async execute(spec: HttpRequestSpec, signal: AbortSignal, state: SendState, hooks: HttpClientHooks): Promise<HttpResponse> {
     const startedAt = Date.now();
     const t0 = performance.now();
     const redirects: RedirectHop[] = [];
     const notes: string[] = [];
+    const cookies = spec.disableCookies ? undefined : hooks.cookies;
+    if (spec.disableCookies && hooks.cookies) notes.push('Cookie jar disabled for this request (request settings).');
     let method = spec.method.toUpperCase();
     let url = new URL(spec.url);
     let headers: HeaderPair[] = spec.headers.map((h) => ({ ...h }));
@@ -112,10 +137,10 @@ export class HttpProtocolClient implements ProtocolClient<HttpRequestSpec, HttpR
       await hooks.beforeRequest?.(url);
       signal.throwIfAborted();
 
-      const encoded = await encodeBody(bodySpec, spec.maxRequestBytes);
+      const encoded = await encodeBody(bodySpec, spec.maxRequestBytes, spec.workingDirectory ? { workingDirectory: spec.workingDirectory } : {});
       const hopHeaders = headers.filter((h) => !['content-length', 'host'].includes(h.name.toLowerCase()));
       if (encoded.contentType && !headerValue(hopHeaders, 'content-type')) hopHeaders.push({ name: 'Content-Type', value: encoded.contentType });
-      const jarCookie = await hooks.cookies?.getCookieHeader(url.href);
+      const jarCookie = await cookies?.getCookieHeader(url.href);
       if (jarCookie) {
         const explicit = hopHeaders.find((h) => h.name.toLowerCase() === 'cookie');
         if (explicit) explicit.value = `${explicit.value}; ${jarCookie}`;
@@ -129,7 +154,8 @@ export class HttpProtocolClient implements ProtocolClient<HttpRequestSpec, HttpR
       for (const h of hopHeaders) flat.push(h.name, h.value);
       requestSize += Buffer.byteLength(`${method} ${url.pathname}${url.search} HTTP/1.1\r\n${hopHeaders.map((h) => `${h.name}: ${h.value}`).join('\r\n')}\r\n\r\n`) + (sendsBody ? encoded.length : 0);
 
-      const dispatcher = this.dispatcherFor(spec, url, dispatchers, notes);
+      const dispatcher = this.dispatcherFor(spec, url, state, notes);
+      const connectionsBefore = state.connections.length;
       const sentAt = performance.now();
       const res = await undiciRequest(url, {
         method: method as Dispatcher.HttpMethod,
@@ -154,7 +180,7 @@ export class HttpProtocolClient implements ProtocolClient<HttpRequestSpec, HttpR
           if (name === 'set-cookie') setCookies.push(String(value));
         }
       }
-      if (setCookies.length) await hooks.cookies?.storeSetCookies(url.href, setCookies);
+      if (setCookies.length) await cookies?.storeSetCookies(url.href, setCookies);
 
       const status = res.statusCode;
       const location = headerValue(responseHeaders, 'location');
@@ -165,13 +191,22 @@ export class HttpProtocolClient implements ProtocolClient<HttpRequestSpec, HttpR
         const next = new URL(location, url);
         redirects.push({ url: url.href, status, location: next.href });
         if (next.origin !== url.origin) {
-          headers = headers.filter((h) => !['authorization', 'cookie', 'proxy-authorization'].includes(h.name.toLowerCase()));
-          notes.push(`Redirect to a different origin (${next.origin}): credentials were not forwarded.`);
+          const keepAuth = spec.followAuthorizationHeader === true && headers.some((h) => h.name.toLowerCase() === 'authorization');
+          headers = headers.filter((h) => !['cookie', 'proxy-authorization'].includes(h.name.toLowerCase()) && (keepAuth || h.name.toLowerCase() !== 'authorization'));
+          if (keepAuth) notes.push(`WARNING: the Authorization header was forwarded to a different origin (${next.origin}) because "Follow Authorization header" is enabled for this request.`);
+          else notes.push(`Redirect to a different origin (${next.origin}): credentials were not forwarded.`);
         }
-        if (status === 303 || ((status === 301 || status === 302) && method === 'POST')) {
+        if (spec.removeRefererHeaderOnRedirect && headers.some((h) => h.name.toLowerCase() === 'referer')) {
+          headers = headers.filter((h) => h.name.toLowerCase() !== 'referer');
+          notes.push('Referer header removed on redirect (request settings).');
+        }
+        const switchToGet = status === 303 || ((status === 301 || status === 302) && method === 'POST');
+        if (switchToGet && !spec.followOriginalHttpMethod) {
           if (method !== 'HEAD') method = 'GET';
           bodySpec = { kind: 'none' };
           headers = headers.filter((h) => !['content-type', 'content-length', 'content-encoding'].includes(h.name.toLowerCase()));
+        } else if (switchToGet) {
+          notes.push(`Kept ${method} and the request body on a ${status} redirect ("Follow original HTTP method" is enabled).`);
         }
         url = next;
         continue;
@@ -182,10 +217,16 @@ export class HttpProtocolClient implements ProtocolClient<HttpRequestSpec, HttpR
       const read = hasBody ? await readBody(res.body, headerValue(responseHeaders, 'content-encoding'), spec, signal) : { body: Buffer.alloc(0), size: 0 };
       const doneAt = performance.now();
 
+      const conn = finalConnection(state.connections, connectionsBefore, url);
+      if (conn?.connection.hostOverride) notes.push(`${url.hostname} resolved via hosts override to ${conn.connection.hostOverride}.`);
+      if (spec.httpVersion === '2' && conn && conn.httpVersion !== 'HTTP/2') {
+        notes.push(url.protocol === 'https:' ? 'HTTP/2 was requested but the server only offered HTTP/1.1.' : 'HTTP/2 was requested but is only negotiated over TLS (https); plain http uses HTTP/1.1.');
+      }
+
       return {
         status,
         statusText: STATUS_CODES[status] ?? '',
-        httpVersion: 'HTTP/1.1',
+        httpVersion: conn?.httpVersion ?? 'HTTP/1.1',
         headers: responseHeaders,
         body: read.body,
         size: read.size,
@@ -193,10 +234,18 @@ export class HttpProtocolClient implements ProtocolClient<HttpRequestSpec, HttpR
         ...(read.filePath ? { bodyFilePath: read.filePath } : {}),
         url: url.href,
         redirects,
-        timings: { startedAt, waitingMs: Math.round(headersAt - sentAt), downloadMs: Math.round(doneAt - headersAt), totalMs: Math.round(doneAt - t0) },
+        timings: {
+          startedAt,
+          waitingMs: Math.round(headersAt - sentAt),
+          downloadMs: Math.round(doneAt - headersAt),
+          totalMs: Math.round(doneAt - t0),
+          ...(conn ? { dnsMs: conn.connection.reused ? 0 : conn.dnsMs, connectMs: conn.connection.reused ? 0 : conn.connectMs, tlsMs: conn.connection.reused ? 0 : conn.tlsMs } : {}),
+        },
         requestSize,
         setCookies,
         notes,
+        ...(conn?.tls ? { tls: conn.tls } : {}),
+        ...(conn ? { connection: conn.connection } : {}),
       };
     }
   }
@@ -235,6 +284,19 @@ export class HttpProtocolClient implements ProtocolClient<HttpRequestSpec, HttpR
     };
     return new AppError('NETWORK_ERROR', friendly[code] ?? `Network error${code ? ` (${code})` : ''}.`, { code }, { cause: error });
   }
+}
+
+/**
+ * The connection that served the final hop: a connection opened during that hop, or (keep-alive)
+ * the most recent one to the same host, flagged as reused with zero connect timings.
+ */
+function finalConnection(connections: ObservedConnection[], openedBefore: number, url: URL): ObservedConnection | undefined {
+  const fresh = connections.slice(openedBefore);
+  const sameHost = (c: ObservedConnection) => c.origin.startsWith(`${url.protocol}//${url.hostname}:`);
+  const own = fresh.filter(sameHost).at(-1) ?? fresh.at(-1);
+  if (own) return own;
+  const previous = connections.filter(sameHost).at(-1);
+  return previous ? { ...previous, dnsMs: 0, connectMs: 0, tlsMs: 0, connection: { ...previous.connection, reused: true } } : undefined;
 }
 
 function tlsHint(code: string): string {

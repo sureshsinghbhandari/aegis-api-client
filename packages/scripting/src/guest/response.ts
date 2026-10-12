@@ -29,94 +29,8 @@ function show(v) {
   }
 }
 
-// ---------------------------------------------------------------- JSON schema subset
-const SCHEMA_KEYWORDS = {
-  type: 1, properties: 1, required: 1, items: 1, enum: 1, const: 1, minimum: 1, maximum: 1,
-  minLength: 1, maxLength: 1, pattern: 1, minItems: 1, maxItems: 1, additionalProperties: 1,
-  allOf: 1, anyOf: 1, oneOf: 1, not: 1,
-};
-const SCHEMA_ANNOTATIONS = { title: 1, description: 1, $schema: 1, $id: 1, $comment: 1, default: 1, examples: 1, format: 1 };
-function jsonTypeOf(v) {
-  if (v === null) return 'null';
-  if ($isArray(v)) return 'array';
-  return typeof v;
-}
-function matchesType(v, t) {
-  const actual = jsonTypeOf(v);
-  if (t === 'integer') return actual === 'number' && Math.floor(v) === v;
-  if (t === 'number') return actual === 'number' && isFinite(v);
-  return actual === t;
-}
-function schemaErrors(value, schema, path, out, depth) {
-  if (depth > 32) throw new Error('JSON schema is nested too deeply');
-  if (schema === true) return;
-  if (schema === false) { out.push(path + ' is not allowed'); return; }
-  if (schema === null || typeof schema !== 'object') throw new Error('Invalid JSON schema: expected an object');
-  for (const key of $keys(schema)) {
-    if (!SCHEMA_KEYWORDS[key] && !SCHEMA_ANNOTATIONS[key]) {
-      throw new Error('Unsupported JSON schema keyword "' + key + '". Supported: ' + $keys(SCHEMA_KEYWORDS).join(', '));
-    }
-  }
-  if (schema.type !== undefined) {
-    const types = $isArray(schema.type) ? schema.type : [schema.type];
-    if (!types.some(function (t) { return matchesType(value, t); })) {
-      out.push(path + ' should be ' + types.join(' or ') + ' but was ' + jsonTypeOf(value));
-      return;
-    }
-  }
-  if (schema.enum !== undefined && !schema.enum.some(function (e) { return deepEqual(e, value); })) {
-    out.push(path + ' should be one of ' + show(schema.enum));
-  }
-  if (schema.const !== undefined && !deepEqual(schema.const, value)) out.push(path + ' should equal ' + show(schema.const));
-  if (typeof value === 'number') {
-    if (schema.minimum !== undefined && value < schema.minimum) out.push(path + ' should be >= ' + schema.minimum);
-    if (schema.maximum !== undefined && value > schema.maximum) out.push(path + ' should be <= ' + schema.maximum);
-  }
-  if (typeof value === 'string') {
-    if (schema.minLength !== undefined && value.length < schema.minLength) out.push(path + ' should have length >= ' + schema.minLength);
-    if (schema.maxLength !== undefined && value.length > schema.maxLength) out.push(path + ' should have length <= ' + schema.maxLength);
-    if (schema.pattern !== undefined && !new RegExp(schema.pattern).test(value)) out.push(path + ' should match pattern ' + schema.pattern);
-  }
-  if ($isArray(value)) {
-    if (schema.minItems !== undefined && value.length < schema.minItems) out.push(path + ' should have at least ' + schema.minItems + ' items');
-    if (schema.maxItems !== undefined && value.length > schema.maxItems) out.push(path + ' should have at most ' + schema.maxItems + ' items');
-    if (schema.items !== undefined) {
-      for (let i = 0; i < value.length; i++) schemaErrors(value[i], schema.items, path + '[' + i + ']', out, depth + 1);
-    }
-  }
-  if (value !== null && typeof value === 'object' && !$isArray(value)) {
-    if (schema.required !== undefined) {
-      for (const r of schema.required) {
-        if (!Object.prototype.hasOwnProperty.call(value, r)) out.push(path + ' is missing required property "' + r + '"');
-      }
-    }
-    const props = schema.properties || {};
-    for (const k of $keys(props)) {
-      if (Object.prototype.hasOwnProperty.call(value, k)) schemaErrors(value[k], props[k], path + '.' + k, out, depth + 1);
-    }
-    if (schema.additionalProperties === false) {
-      for (const k of $keys(value)) if (!Object.prototype.hasOwnProperty.call(props, k)) out.push(path + ' has unexpected property "' + k + '"');
-    } else if (schema.additionalProperties !== undefined && schema.additionalProperties !== true) {
-      throw new Error('Unsupported JSON schema: additionalProperties must be a boolean');
-    }
-  }
-  if (schema.allOf !== undefined) for (const s of schema.allOf) schemaErrors(value, s, path, out, depth + 1);
-  if (schema.anyOf !== undefined) {
-    const ok = schema.anyOf.some(function (s) { const e = []; schemaErrors(value, s, path, e, depth + 1); return e.length === 0; });
-    if (!ok) out.push(path + ' should match at least one schema in anyOf');
-  }
-  if (schema.oneOf !== undefined) {
-    const n = schema.oneOf.filter(function (s) { const e = []; schemaErrors(value, s, path, e, depth + 1); return e.length === 0; }).length;
-    if (n !== 1) out.push(path + ' should match exactly one schema in oneOf (matched ' + n + ')');
-  }
-  if (schema.not !== undefined) {
-    const e = [];
-    schemaErrors(value, schema.not, path, e, depth + 1);
-    if (e.length === 0) out.push(path + ' should not match the "not" schema');
-  }
-}
-
 // ---------------------------------------------------------------- response
+// (JSON-schema validation lives in libs.ts: validateJsonSchema, backed by the bundled ajv / tv4.)
 const RESP = new WeakMap();
 class Response {
   constructor(s) {
@@ -217,11 +131,10 @@ class ResponseAssertion {
     }
     return this.#check(hit.found && deepEqual(hit.value, value), "expected response JSON body path '" + path + "' to equal " + show(value) + ' but got ' + (hit.found ? show(hit.value) : 'nothing'), "expected response JSON body path '" + path + "' to not equal " + show(value));
   }
-  jsonSchema(schema) {
+  jsonSchema(schema, options) {
     let parsed;
     try { parsed = this.#r.json(); } catch (e) { throw assertionError('expected response body to be valid JSON'); }
-    const errors = [];
-    schemaErrors(parsed, schema, '$', errors, 0);
+    const errors = validateJsonSchema(parsed, schema, options);
     return this.#check(errors.length === 0, 'expected response body to match the JSON schema: ' + errors.slice(0, 3).join('; '), 'expected response body to not match the JSON schema');
   }
   get withBody() {

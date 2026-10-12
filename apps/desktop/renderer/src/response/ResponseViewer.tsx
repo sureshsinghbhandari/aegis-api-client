@@ -1,11 +1,13 @@
-import type { ExecutionResult } from '@aegis/core';
+import type { ExecutionResult, RequestExample, ResponseView } from '@aegis/core';
 import { useEffect, useRef, useState } from 'react';
 import { Badge, Button, EmptyState, formatBytes, formatMs, Spinner, statusTone, Tabs } from '../components/ui';
 import { suggestedFileName } from '../lib/format';
 import { useApp, type OpenTab } from '../store/app';
+import { useUi } from '../store/ui';
 import { BodyViewsFor } from './BodyViewsFor';
 import { saveResponse } from './LargeBodyViewer';
 import { TestSummary } from './TestResultsList';
+import { useResponseBody, type ResponseBody } from './useResponseBody';
 
 function useElapsed(active: boolean, key: string | undefined): number {
   const start = useRef(Date.now());
@@ -72,7 +74,23 @@ function ErrorView({ tab, error, result }: { tab: OpenTab; error: { code: string
   );
 }
 
-type SectionId = 'pretty' | 'raw' | 'preview' | 'headers' | 'cookies' | 'tests' | 'timeline';
+type SectionId = 'pretty' | 'raw' | 'preview' | 'visualize' | 'headers' | 'cookies' | 'tests' | 'timeline';
+
+/** Build an example from the current response (body only when it is text and fully loaded). */
+export function exampleFromResponse(name: string, response: ResponseView, body: ResponseBody, result: ExecutionResult): RequestExample {
+  const textual = body.text !== null && !body.large;
+  const language = body.kind === 'json' || body.kind === 'xml' || body.kind === 'html' ? body.kind : 'text';
+  return {
+    name,
+    status: response.statusText,
+    code: response.status,
+    headers: response.headers.map((h) => ({ key: h.name, value: h.value, enabled: true })),
+    body: textual ? body.text! : '',
+    language,
+    ...(result.request ? { originalRequest: { method: result.request.method, url: result.request.url, headers: result.request.headers } } : {}),
+    metadata: textual ? {} : { bodyOmitted: body.large ? 'too large' : 'binary' },
+  };
+}
 
 export function ResponseViewer({ tab }: { tab: OpenTab }) {
   const { response: state } = tab;
@@ -81,7 +99,8 @@ export function ResponseViewer({ tab }: { tab: OpenTab }) {
   const [dismissed, setDismissed] = useState<string | null>(null);
   const elapsed = useElapsed(state.status === 'sending', state.executionId);
   const result = state.result;
-  const response = result?.response;
+  const response = result?.response ?? null;
+  const body = useResponseBody(response);
 
   if (state.status === 'idle') {
     return (
@@ -105,7 +124,7 @@ export function ResponseViewer({ tab }: { tab: OpenTab }) {
   }
 
   const error = state.error ?? result?.error;
-  if (!response) {
+  if (!response || !result) {
     return (
       <div className="rv-root">
         {error ? <ErrorView tab={tab} error={error} {...(result ? { result } : {})} /> : <EmptyState title="No response received">The request finished without a response.</EmptyState>}
@@ -113,10 +132,16 @@ export function ResponseViewer({ tab }: { tab: OpenTab }) {
     );
   }
 
-  const tests = result?.tests ?? [];
-  const warnings = result?.warnings ?? [];
+  const tests = result.tests;
+  const warnings = result.warnings;
   const showWarnings = warnings.length > 0 && dismissed !== state.executionId;
   const suggested = suggestedFileName(response.contentType, response.url);
+
+  const saveAsExample = async () => {
+    const name = await useUi.getState().prompt({ title: 'Save response as example', label: 'Example name', initial: `${response.status} ${response.statusText}`.trim() || tab.draft.name, confirmLabel: 'Save example' });
+    if (!name) return;
+    await useApp.getState().addExample(tab.tabId, exampleFromResponse(name, response, body, result));
+  };
 
   return (
     <div className="rv-root">
@@ -136,11 +161,14 @@ export function ResponseViewer({ tab }: { tab: OpenTab }) {
           </span>
         )}
         <span className="wb-spacer" />
+        <Button size="sm" onClick={() => void saveAsExample()} title="Store this response as an example of the request (exported with the collection)">
+          Save as example
+        </Button>
         <Button size="sm" onClick={() => saveResponse(response.responseId, suggested)} title="Save the full response body to a file">
           Save response
         </Button>
       </div>
-      {error && <ErrorView tab={tab} error={error} {...(result ? { result } : {})} />}
+      {error && <ErrorView tab={tab} error={error} result={result} />}
       {showWarnings && (
         <div className="banner rv-warnings" role="status">
           <ul>
@@ -162,6 +190,7 @@ export function ResponseViewer({ tab }: { tab: OpenTab }) {
           { id: 'pretty' as const, label: 'Pretty' },
           { id: 'raw' as const, label: 'Raw' },
           { id: 'preview' as const, label: 'Preview' },
+          { id: 'visualize' as const, label: 'Visualize', badge: result.visualizer ? <span className="wb-badge-dot" aria-label="has content" /> : undefined },
           { id: 'headers' as const, label: 'Headers', badge: response.headers.length },
           { id: 'cookies' as const, label: 'Cookies', badge: response.cookies.length || undefined },
           { id: 'tests' as const, label: 'Test Results', badge: tests.length > 0 ? <TestSummary tests={tests} /> : undefined },
@@ -169,7 +198,7 @@ export function ResponseViewer({ tab }: { tab: OpenTab }) {
         ]}
       />
       <div className="rv-panel" role="tabpanel">
-        {result && <BodyViewsFor section={section} response={response} result={result} onSave={() => saveResponse(response.responseId, suggested)} />}
+        <BodyViewsFor section={section} response={response} result={result} body={body} onSave={() => saveResponse(response.responseId, suggested)} />
       </div>
     </div>
   );

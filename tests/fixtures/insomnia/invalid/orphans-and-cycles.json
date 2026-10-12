@@ -1,0 +1,27 @@
+{
+  "_type": "export",
+  "__export_format": 3,
+  "__export_source": "insomnia.desktop.app:v7.1.1",
+  "resources": [
+    { "_id": "wrk_1", "_type": "workspace", "parentId": null, "name": "Broken workspace", "__proto__": { "polluted": "workspace" } },
+    { "_id": "req_orphan", "_type": "request", "parentId": "fld_missing", "name": "Orphan request", "method": "GET", "url": "https://example.com/orphan", "headers": [], "parameters": [], "body": {}, "authentication": {} },
+    { "_id": "fld_a", "_type": "request_group", "parentId": "fld_b", "name": "Cycle A", "metaSortKey": 1 },
+    { "_id": "fld_b", "_type": "request_group", "parentId": "fld_a", "name": "Cycle B", "metaSortKey": 2 },
+    { "_id": "req_in_cycle", "_type": "request", "parentId": "fld_a", "name": "In cycle", "method": "GET", "url": "https://example.com/cycle", "headers": [], "parameters": [], "body": {}, "authentication": {} },
+    { "_id": "req_dup", "_type": "request", "parentId": "wrk_1", "name": "First", "method": "GET", "url": "https://example.com/first", "headers": [], "parameters": [], "body": {}, "authentication": {} },
+    { "_id": "req_dup", "_type": "request", "parentId": "wrk_1", "name": "Duplicate id", "method": "GET", "url": "https://example.com/second", "headers": [], "parameters": [], "body": {}, "authentication": {} },
+    { "_type": "request", "parentId": "wrk_1", "name": "No id", "method": "GET", "url": "https://user:pw-literal@example.com/noid", "headers": [], "parameters": [], "body": {}, "authentication": { "type": "weird", "token": "weird-literal", "nested": { "a": 1 } } },
+    { "_id": "env_orphan", "_type": "environment", "parentId": "env_missing", "name": "Orphan env", "data": { "k": "v", "__proto__": { "polluted": "env" }, "deep": { "deeper": { "deepest": "x" } }, "list": [1, 2] } },
+    { "_id": "req_files", "_type": "request", "parentId": "wrk_1", "name": "Hostile files", "method": "POST", "url": "https://example.com/upload", "headers": [], "parameters": [], "body": { "mimeType": "multipart/form-data", "params": [{ "name": "a", "type": "file", "fileName": "../../etc/passwd" }, { "name": "b", "type": "file", "fileName": "\\\\server\\share\\f" }, { "name": "c", "type": "file", "fileName": "files/ok.txt" }] }, "authentication": {} },
+    { "_id": "req_bin", "_type": "request", "parentId": "wrk_1", "name": "Hostile binary", "method": "PUT", "url": "https://example.com/raw", "headers": [], "parameters": [], "body": { "mimeType": "application/octet-stream", "fileName": "..\\..\\boot.ini" }, "authentication": {} },
+    { "_id": "req_netrc", "_type": "request", "parentId": "wrk_1", "name": "netrc", "method": "GET", "url": "https://example.com/netrc", "headers": [], "parameters": [], "body": {}, "authentication": { "type": "netrc" } },
+    { "_id": "req_ntlm", "_type": "request", "parentId": "wrk_1", "name": "ntlm", "method": "GET", "url": "https://example.com/ntlm", "headers": [], "parameters": [], "body": {}, "authentication": { "type": "ntlm", "username": "dom\\user", "password": "ntlm-literal" } },
+    { "_id": "req_oauth_pw", "_type": "request", "parentId": "wrk_1", "name": "oauth password + pkce", "method": "GET", "url": "https://example.com/o", "headers": [], "parameters": [], "body": {}, "authentication": { "type": "oauth2", "grantType": "password", "accessTokenUrl": "https://example.com/token", "username": "u", "password": "oauthpw-literal", "usePkce": true } },
+    { "_id": "req_oauth_code_pkce", "_type": "request", "parentId": "wrk_1", "name": "oauth code + pkce", "method": "GET", "url": "https://example.com/o2", "headers": [], "parameters": [], "body": {}, "authentication": { "type": "oauth2", "grantType": "authorization_code", "authorizationUrl": "https://example.com/auth", "accessTokenUrl": "https://example.com/token", "clientId": "c", "redirectUrl": "http://localhost/cb", "usePkce": true, "credentialsInBody": false } },
+    { "_id": "req_oauth_bad", "_type": "request", "parentId": "wrk_1", "name": "oauth unknown grant", "method": "GET", "url": "https://example.com/o3", "headers": [], "parameters": [], "body": {}, "authentication": { "type": "oauth2", "grantType": "device", "accessTokenUrl": "https://example.com/token" } },
+    { "_id": "req_bad_gql", "_type": "request", "parentId": "wrk_1", "name": "bad graphql", "method": "POST", "url": "https://example.com/gql", "headers": [], "parameters": [], "body": { "mimeType": "application/graphql", "text": "not json" }, "authentication": {} },
+    { "_id": "req_bearer_prefix", "_type": "request", "parentId": "wrk_1", "name": "bearer prefix", "method": "GET", "url": "https://example.com/b", "headers": [], "parameters": [], "body": {}, "authentication": { "type": "bearer", "token": "t-literal", "prefix": "Token" } },
+    "not an object",
+    { "_id": "unknown_1", "_type": "space_laser", "parentId": "wrk_1", "name": "???" }
+  ]
+}

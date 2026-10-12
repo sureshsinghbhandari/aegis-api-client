@@ -21,8 +21,9 @@ const authConfig = z.object({
 });
 const script = z.object({ type: z.enum(['prerequest', 'test']), language: z.literal('javascript'), source: text(5_000_000), enabled: bool });
 const body = z.object({
-  mode: z.enum(['none', 'raw', 'urlencoded', 'formdata', 'binary']),
+  mode: z.enum(['none', 'raw', 'urlencoded', 'formdata', 'binary', 'graphql']),
   raw: text(256 * 1024 * 1024).optional(),
+  graphql: z.object({ query: text(10_000_000), variables: text(10_000_000), operationName: text(500).optional() }).optional(),
   rawLanguage: z.enum(['json', 'xml', 'text', 'html', 'javascript']).optional(),
   contentType: text(500).optional(),
   filePath: text(4096).optional(),
@@ -55,7 +56,19 @@ const draft = z.object({
   auth: authConfig,
   scripts: z.array(script).max(20),
   examples: z.array(example).max(200),
-  settings: z.object({ timeoutMs: int.optional(), followRedirects: bool.optional(), maxRedirects: int.optional(), verifyTls: bool.optional(), maxResponseBytes: int.optional() }),
+  settings: z.object({
+    timeoutMs: int.optional(),
+    followRedirects: bool.optional(),
+    maxRedirects: int.optional(),
+    verifyTls: bool.optional(),
+    maxResponseBytes: int.optional(),
+    disableCookies: bool.optional(),
+    encodeUrl: bool.optional(),
+    followOriginalHttpMethod: bool.optional(),
+    followAuthorizationHeader: bool.optional(),
+    removeRefererHeaderOnRedirect: bool.optional(),
+    httpVersion: z.enum(['auto', '1.1', '2']).optional(),
+  }),
   metadata: z.record(z.string(), z.unknown()),
 });
 const variable = z.object({
@@ -69,7 +82,7 @@ const variable = z.object({
   type: text(50).optional(),
 });
 const owner = z.object({ scope: z.enum(['environment', 'global', 'collection', 'folder']), ownerId: id });
-const importKind = z.enum(['postman-collection', 'postman-environment', 'backup']);
+const importKind = z.enum(['postman-collection', 'postman-environment', 'backup', 'openapi', 'har', 'insomnia', 'postman-v1', 'postman-dump', 'aegis-workspace', 'auto']);
 
 const noArgs = z.object({}).optional();
 
@@ -103,7 +116,7 @@ export const IPC_SCHEMAS: Record<ApiChannel, z.ZodType> = {
   'requests.save': z.object({ id, draft }),
   'requests.delete': z.object({ id }),
   'requests.duplicate': z.object({ id }),
-  'requests.move': z.object({ kind: z.enum(['folder', 'request']), id, parentFolderId: nullableId, index: int }),
+  'requests.move': z.object({ kind: z.enum(['folder', 'request']), id, parentFolderId: nullableId, index: int, collectionId: id.optional() }),
   'requests.effectiveAuth': z.object({ id }),
 
   'environments.list': z.object({ workspaceId: id }),
@@ -162,6 +175,8 @@ export const IPC_SCHEMAS: Record<ApiChannel, z.ZodType> = {
     stopOnFailure: bool,
     dataFile: z.object({ name: text(255), content: text(64 * 1024 * 1024) }).optional(),
     confirmProduction: bool.optional(),
+    requestIds: z.array(id).max(200_000).optional(),
+    keepResponses: bool.optional(),
   }),
   'runner.stop': z.object({ runId: id }),
   'runner.list': z.object({ workspaceId: id }),
@@ -173,7 +188,7 @@ export const IPC_SCHEMAS: Record<ApiChannel, z.ZodType> = {
   'importExport.discard': z.object({ token: id }),
   'importExport.exportCollection': z.object({ collectionId: id, includeSecrets: bool }),
   'importExport.exportEnvironment': z.object({ environmentId: id, includeSecrets: bool }),
-  'importExport.createBackup': z.object({ includeHistory: bool, passphrase: text(1000).optional() }),
+  'importExport.createBackup': z.object({ includeHistory: bool, passphrase: text(1000).optional(), historyLimit: z.number().int().min(0).max(100_000).optional() }),
   'importExport.listBackups': noArgs,
 
   'settings.get': noArgs,
@@ -193,6 +208,8 @@ export const IPC_SCHEMAS: Record<ApiChannel, z.ZodType> = {
     certPem: text(1_000_000).optional(),
     keyPem: text(1_000_000).optional(),
     passphrase: text(2000).optional(),
+    pfxBase64: text(4_000_000).optional(),
+    pfxPath: text(4096).optional(),
   }),
   'certificates.pickFile': z.object({ purpose: z.enum(['certificate', 'key']) }),
   'certificates.setEnabled': z.object({ id, enabled: bool }),
@@ -202,7 +219,55 @@ export const IPC_SCHEMAS: Record<ApiChannel, z.ZodType> = {
 
   'tools.decodeJwt': z.object({ token: text(100_000) }),
   'tools.pickFile': z.object({ purpose: z.enum(['upload', 'data']) }),
-  'tools.oauth2GetToken': z.object({ requestId: id.optional(), collectionId: id.optional(), folderId: id.optional(), auth: authConfig, environmentId: nullableId.optional(), workspaceId: id }),
+  'tools.oauth2GetToken': z.object({ requestId: id.optional(), collectionId: id.optional(), folderId: id.optional(), auth: authConfig, environmentId: nullableId.optional(), workspaceId: id, cancelId: id.optional() }),
+  'tools.oauth2DeviceStart': z.object({ requestId: id.optional(), collectionId: id.optional(), folderId: id.optional(), auth: authConfig, environmentId: nullableId.optional(), workspaceId: id }),
+  'tools.oauth2DevicePoll': z.object({
+    requestId: id.optional(),
+    collectionId: id.optional(),
+    folderId: id.optional(),
+    auth: authConfig,
+    environmentId: nullableId.optional(),
+    workspaceId: id,
+    deviceCode: text(4096).min(1),
+    interval: z.number().min(0).max(3600),
+  }),
+
+  'collections.findReplace': z.object({
+    collectionId: id.optional(),
+    workspaceId: id.optional(),
+    find: z.string().min(1).max(2000),
+    replace: text(10_000),
+    scopes: z.array(z.enum(['url', 'params', 'headers', 'body', 'scripts', 'descriptions', 'variables'])).max(7),
+    matchCase: bool.optional(),
+    wholeWord: bool.optional(),
+    useRegex: bool.optional(),
+    apply: bool,
+  }),
+  'folders.duplicate': z.object({ id }),
+  'cookies.add': z.object({
+    workspaceId: id,
+    domain: z.string().min(1).max(500),
+    path: text(2000).optional(),
+    name: z.string().min(1).max(500),
+    value: text(64 * 1024),
+    hostOnly: bool.optional(),
+    secure: bool.optional(),
+    httpOnly: bool.optional(),
+    sameSite: text(20).nullable().optional(),
+    expiresAt: text(40).nullable().optional(),
+  }),
+  'cookies.update': z.object({
+    id,
+    domain: z.string().min(1).max(500).optional(),
+    path: text(2000).optional(),
+    name: z.string().min(1).max(500).optional(),
+    value: text(64 * 1024).optional(),
+    hostOnly: bool.optional(),
+    secure: bool.optional(),
+    httpOnly: bool.optional(),
+    sameSite: text(20).nullable().optional(),
+    expiresAt: text(40).nullable().optional(),
+  }),
 };
 
 /** Fail fast (and in tests) if a channel was added without a schema, or a schema without a channel. */

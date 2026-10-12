@@ -48,6 +48,7 @@ import {
 } from './executor-support';
 import { buildNetworkConfig } from './network';
 import { buildResponseView } from './response-store';
+import { runScriptCookieOp } from './script-cookies';
 
 export interface ExecuteExtra {
   /** Runtime ("local") variables, carried across requests inside a collection run. */
@@ -98,6 +99,20 @@ export class RequestExecutor {
   async cancel(executionId: string): Promise<void> {
     this.controllers.get(executionId)?.abort(new AppError('REQUEST_CANCELLED', 'The request was cancelled.'));
     await this.http.cancel(executionId);
+  }
+
+  /**
+   * Make an out-of-band operation (e.g. an interactive OAuth token flow) cancellable through
+   * `cancel(id)`. Returns the controller; call `untrack(id)` when the operation finishes.
+   */
+  track(id: string): AbortController {
+    const controller = new AbortController();
+    this.controllers.set(id, controller);
+    return controller;
+  }
+
+  untrack(id: string): void {
+    this.controllers.delete(id);
   }
 
   // ------------------------------------------------------------------ loading
@@ -206,9 +221,12 @@ export class RequestExecutor {
 
     const host: ScriptHost = {
       sendRequest: (req, signal) => this.scriptSend(req, signal, input, sendCounter, controller),
+      cookieJar: (op) => runScriptCookieOp(this.ctx, input.workspaceId, op, result.warnings),
     };
 
     const scriptsFor = (type: ScriptPhase): Array<{ origin: string; source: string }> => {
+      // `runScripts: false` (e.g. "send without scripts") skips every pre-request and test script.
+      if (input.runScripts === false) return [];
       const pick = (list: ScriptEntry[], origin: string) => list.filter((s) => s.type === type && s.enabled && s.source.trim()).map((s) => ({ origin, source: s.source }));
       return [
         ...pick(loaded.collectionScripts, 'collection'),
@@ -236,7 +254,9 @@ export class RequestExecutor {
             iterationCount: extra.iteration?.count ?? 1,
             requestName: loaded.requestName,
             requestId: loaded.stored?.id ?? input.executionId,
+            environmentName: loaded.environment?.name ?? null,
           },
+          auth: draft.auth,
           limits: { timeoutMs: settings.scripting.timeoutMs, memoryLimitBytes: settings.scripting.memoryLimitMb * 1024 * 1024 },
           secretValues: [...secretValues],
           host,
@@ -251,6 +271,7 @@ export class RequestExecutor {
         if (phase === 'prerequest') snapshotRef.current = out.request;
         if (out.skipRequest) skip = true;
         if (out.nextRequest !== undefined) nextRequest = out.nextRequest;
+        if (out.visualizer !== undefined) result.visualizer = out.visualizer;
         if (!out.ok && out.error) {
           ok = false;
           const message = `${s.origin} script failed: ${out.error.message}`;
@@ -295,14 +316,26 @@ export class RequestExecutor {
       // ----- build spec, then authentication
       const net = await buildNetworkConfig(this.ctx, buildRequestUrl(resolved.url, resolved.queryParams, resolved.pathVariables));
       const specId = input.executionId;
+      // Per-request "strict SSL off" is honoured ONLY when policy allows insecure TLS; otherwise it is enforced on and reported.
+      let tls = net.tls;
+      if (resolved.settings.verifyTls === false && net.tls.rejectUnauthorized) {
+        if (policy.current.allowInsecureTls) tls = { ...net.tls, rejectUnauthorized: false };
+        else result.warnings.push('This request asks to skip TLS certificate verification, but organization policy enforces it (allowInsecureTls is false). Verification stayed on.');
+      }
       let spec = buildHttpRequestSpec(resolved, {
         id: specId,
         limits: net.limits,
-        tls: net.tls,
+        tls,
         ...(net.proxy ? { proxy: net.proxy } : {}),
         spillDirectory: this.ctx.deps.paths.responsesDir,
+        httpVersion: net.httpVersion,
+        hosts: net.hosts,
+        ...(net.workingDirectory ? { workingDirectory: net.workingDirectory } : {}),
       });
+      result.warnings.push(...net.notes);
       if (!net.tls.rejectUnauthorized) result.warnings.push('TLS certificate validation is disabled by settings.');
+      else if (!tls.rejectUnauthorized) result.warnings.push('TLS certificate validation is disabled for this request (request settings, allowed by policy).');
+      if (spec.followAuthorizationHeader) result.warnings.push('"Follow Authorization header" is enabled: credentials will be forwarded to other origins on redirect.');
 
       const effective = resolveEffectiveAuth(
         draft.auth,
@@ -316,6 +349,7 @@ export class RequestExecutor {
       for (const v of Object.values(authParams.params)) if (typeof v === 'string' && v.length >= 3 && effective.auth.type !== 'none') secretValues.add(v);
       secretValues.delete(authParams.params.username as string);
 
+      const probeSpec = spec;
       const authContext: AuthContext = {
         method: spec.method,
         url: spec.url,
@@ -323,6 +357,8 @@ export class RequestExecutor {
         body: spec.body,
         now: () => this.ctx.now(),
         send: (req) => this.sendTokenRequest(req, specId, controller.signal),
+        // Challenge round trip (Digest & co.): the prepared request without auth, same policy/cookies/TLS.
+        challenge: () => this.sendChallenge(probeSpec, input.workspaceId, controller.signal),
       };
       const authResult = await this.authRegistry.apply(authParams, authContext);
       spec = applyAuthToSpec(spec, authResult);
@@ -346,6 +382,7 @@ export class RequestExecutor {
       const entry = this.ctx.responses.put(response);
       result.response = await buildResponseView(response, entry.id);
       result.response.notes = [...response.notes, ...authResult.notes.filter((n) => !n.startsWith('WARNING'))];
+      result.warnings.push(...response.notes.filter((n) => n.startsWith('WARNING')).map((n) => n.replace(/^WARNING:\s*/, '')));
       result.ok = true;
 
       // ----- post-response scripts
@@ -426,6 +463,8 @@ export class RequestExecutor {
       maxRequestBytes: net.limits.maxRequestBytes,
       tls: net.tls,
       ...(net.proxy ? { proxy: net.proxy } : {}),
+      httpVersion: net.httpVersion,
+      ...(Object.keys(net.hosts).length ? { hosts: net.hosts } : {}),
     };
     const onAbort = () => void this.http.cancel(id);
     signal.addEventListener('abort', onAbort, { once: true });
@@ -448,6 +487,34 @@ export class RequestExecutor {
     }
   }
 
+  /**
+   * Challenge round trip for challenge/response auth (Digest, ...): sends `spec` exactly as prepared
+   * but without any Authorization header, discards the body and returns status + headers (e.g. a 401
+   * with `WWW-Authenticate`). Same policy, cookie jar, TLS and proxy handling as the real request;
+   * the response body is capped small because only the headers matter.
+   */
+  async sendChallenge(spec: HttpRequestSpec, workspaceId: string, signal: AbortSignal): Promise<{ status: number; headers: HeaderPair[] }> {
+    const probe: HttpRequestSpec = {
+      ...spec,
+      id: `${spec.id}:challenge`,
+      headers: spec.headers.filter((h) => h.name.toLowerCase() !== 'authorization'),
+      followRedirects: false,
+      maxResponseBytes: Math.min(spec.maxResponseBytes, 1024 * 1024),
+    };
+    const onAbort = () => void this.http.cancel(probe.id);
+    signal.addEventListener('abort', onAbort, { once: true });
+    try {
+      const policy = this.ctx.deps.policy;
+      const res = await this.http.send(probe, {
+        ...(spec.disableCookies ? {} : { cookies: this.ctx.cookies.hookFor(workspaceId) }),
+        beforeRequest: (u) => policy.assertHostAllowed(u.hostname),
+      });
+      return { status: res.status, headers: res.headers };
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+
   /** HTTP for OAuth token endpoints: identical policy/TLS/proxy as user traffic. */
   async sendTokenRequest(req: { method: string; url: string; headers: HeaderPair[]; body?: string; timeoutMs?: number }, id: string, signal: AbortSignal) {
     const tokenNet = await buildNetworkConfig(this.ctx, req.url);
@@ -464,6 +531,8 @@ export class RequestExecutor {
       maxRequestBytes: 1024 * 1024,
       tls: tokenNet.tls,
       ...(tokenNet.proxy ? { proxy: tokenNet.proxy } : {}),
+      httpVersion: tokenNet.httpVersion,
+      ...(Object.keys(tokenNet.hosts).length ? { hosts: tokenNet.hosts } : {}),
     };
     const onAbort = () => void this.http.cancel(spec.id);
     signal.addEventListener('abort', onAbort, { once: true });

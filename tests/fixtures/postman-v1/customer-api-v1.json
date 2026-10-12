@@ -1,0 +1,234 @@
+{
+  "id": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+  "name": "Customer API (v1)",
+  "description": "Legacy Postman Collection v1 export used as an import fixture.",
+  "timestamp": 1500000000000,
+  "owner": "12345",
+  "public": false,
+  "remote_id": 0,
+  "hasRequests": true,
+  "order": ["req_status"],
+  "folders_order": ["fld_auth", "fld_customers"],
+  "folders": [
+    {
+      "id": "fld_auth",
+      "name": "Authentication",
+      "description": "Token endpoints",
+      "order": ["req_login", "req_refresh"],
+      "folders_order": [],
+      "collection_id": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+      "auth": { "type": "noauth" }
+    },
+    {
+      "id": "fld_customers",
+      "name": "Customers",
+      "description": "",
+      "order": ["req_list", "req_create"],
+      "folders_order": ["fld_admin"],
+      "collection_id": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+      "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+      "events": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["console.log('folder pre-request');"] } }],
+      "variables": [{ "key": "pageSize", "value": "20", "type": "string" }]
+    },
+    {
+      "id": "fld_admin",
+      "name": "Admin",
+      "description": "Admin only",
+      "folder": "fld_customers",
+      "order": ["req_delete"],
+      "folders_order": [],
+      "collection_id": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d"
+    },
+    {
+      "id": "fld_unreferenced",
+      "name": "Unreferenced",
+      "description": "Not listed in any folders_order",
+      "order": [],
+      "folders_order": [],
+      "collection_id": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d"
+    }
+  ],
+  "requests": [
+    {
+      "id": "req_status",
+      "name": "Service status",
+      "url": "{{baseUrl}}/status",
+      "method": "GET",
+      "headers": "Accept: application/json\nX-Debug: 1",
+      "pathVariables": {},
+      "data": [],
+      "dataMode": null,
+      "description": "Returns the **service status**.",
+      "descriptionFormat": "markdown",
+      "preRequestScript": "",
+      "tests": "pm.test('ok', function () { pm.response.to.have.status(200); });",
+      "currentHelper": "normal",
+      "helperAttributes": {},
+      "responses": [
+        {
+          "id": "res_status_ok",
+          "name": "Healthy",
+          "status": "",
+          "responseCode": { "code": 200, "name": "OK", "detail": "Standard response for successful HTTP requests." },
+          "headers": [{ "name": "Content-Type", "key": "Content-Type", "value": "application/json" }],
+          "text": "{\"status\":\"ok\"}",
+          "language": "json",
+          "mime": "text",
+          "cookies": [],
+          "time": 42,
+          "requestObject": "{\"url\":\"{{baseUrl}}/status\",\"method\":\"GET\"}"
+        }
+      ],
+      "time": 1500000000001,
+      "collectionId": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+      "folder": null
+    },
+    {
+      "id": "req_login",
+      "name": "Login (basic)",
+      "url": "{{baseUrl}}/auth/login?remember=true",
+      "method": "POST",
+      "headers": "Content-Type: application/json",
+      "headerData": [
+        { "key": "Content-Type", "value": "application/json", "enabled": true },
+        { "key": "X-Old-Client", "value": "legacy", "enabled": false, "description": "Removed in v2" }
+      ],
+      "queryParams": [{ "key": "remember", "value": "true", "equals": true, "description": "Keep the session", "enabled": true }],
+      "pathVariables": {},
+      "data": [],
+      "dataMode": "raw",
+      "rawModeData": "{\n  \"remember\": true\n}",
+      "dataOptions": { "raw": { "language": "json" } },
+      "description": "",
+      "preRequestScript": "",
+      "tests": "pm.collectionVariables.set('accessToken', pm.response.json().token);",
+      "events": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.collectionVariables.set('accessToken', pm.response.json().token);"] } }],
+      "currentHelper": "basicAuth",
+      "helperAttributes": { "id": "basic", "username": "api-user", "password": "hunter2-literal", "saveHelperData": true, "showPassword": false },
+      "responses": [],
+      "time": 1500000000002,
+      "collectionId": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+      "folder": "fld_auth"
+    },
+    {
+      "id": "req_refresh",
+      "name": "Refresh token",
+      "url": "{{baseUrl}}/auth/refresh",
+      "method": "POST",
+      "headers": "",
+      "pathVariables": {},
+      "data": [
+        { "key": "grant_type", "value": "refresh_token", "type": "text", "enabled": true },
+        { "key": "refresh_token", "value": "{{refreshToken}}", "type": "text", "enabled": true, "description": "From the login response" }
+      ],
+      "dataMode": "urlencoded",
+      "description": "",
+      "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+      "responses": [],
+      "time": 1500000000003,
+      "collectionId": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+      "folder": "fld_auth"
+    },
+    {
+      "id": "req_list",
+      "name": "List customers",
+      "url": "{{baseUrl}}/customers?page=1&size={{pageSize}}#top",
+      "method": "GET",
+      "headers": "Accept: application/json",
+      "pathVariables": {},
+      "data": [],
+      "dataMode": null,
+      "description": "<p>Returns a <b>page</b> of customers.</p>",
+      "descriptionFormat": "html",
+      "responses": [],
+      "time": 1500000000004,
+      "collectionId": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+      "folder": "fld_customers"
+    },
+    {
+      "id": "req_create",
+      "name": "Create customer (form)",
+      "url": "{{baseUrl}}/customers",
+      "method": "POST",
+      "headers": "",
+      "pathVariables": {},
+      "data": [
+        { "key": "name", "value": "Ada Lovelace", "type": "text", "enabled": true },
+        { "key": "avatar", "value": "files/avatar.png", "type": "file", "enabled": true },
+        { "key": "evil", "value": "../../etc/passwd", "type": "file", "enabled": true },
+        { "key": "draft", "value": "true", "type": "text", "enabled": false }
+      ],
+      "dataMode": "params",
+      "description": "",
+      "currentHelper": "awsSigV4",
+      "helperAttributes": { "id": "awsSigV4", "accessKey": "AKIAEXAMPLE", "secretKey": "aws-literal", "region": "eu-west-1", "service": "execute-api", "sessionToken": "", "saveHelperData": true },
+      "responses": [],
+      "time": 1500000000005,
+      "collectionId": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+      "folder": "fld_customers",
+      "protocolProfileBehavior": { "followRedirects": false, "disableBodyPruning": true }
+    },
+    {
+      "id": "req_delete",
+      "name": "Delete customer",
+      "url": "{{baseUrl}}/customers/:customerId",
+      "method": "DELETE",
+      "headers": "",
+      "pathVariables": { "customerId": "1042" },
+      "pathVariableData": [{ "key": "customerId", "value": "1042", "description": "Customer identifier" }],
+      "data": [],
+      "dataMode": null,
+      "description": "",
+      "currentHelper": "hawkAuth",
+      "helperAttributes": { "id": "hawk", "authId": "dh37fgj492je", "authKey": "hawk-literal", "algorithm": "sha256", "user": "", "nonce": "", "extraData": "", "appId": "", "delegation": "", "timestamp": "" },
+      "responses": [],
+      "time": 1500000000006,
+      "collectionId": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+      "folder": "fld_admin"
+    },
+    {
+      "id": "req_graphql",
+      "name": "GraphQL me",
+      "url": "{{baseUrl}}/graphql",
+      "method": "POST",
+      "headers": "",
+      "pathVariables": {},
+      "data": [],
+      "dataMode": "graphql",
+      "graphqlModeData": { "query": "{ me { id name } }", "variables": "{}" },
+      "description": "",
+      "responses": [],
+      "time": 1500000000007,
+      "collectionId": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+      "folder": null
+    },
+    {
+      "id": "req_orphan",
+      "name": "Orphan in Customers",
+      "url": "{{baseUrl}}/customers/export",
+      "method": "GET",
+      "headers": "",
+      "pathVariables": {},
+      "data": [],
+      "dataMode": null,
+      "description": "",
+      "responses": [],
+      "time": 1500000000008,
+      "collectionId": "2b6f1d3c-9a4e-4f0b-8c7d-1e2f3a4b5c6d",
+      "folder": "fld_customers"
+    }
+  ],
+  "variables": [
+    { "key": "baseUrl", "value": "https://api.example.com/v1", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "secret" }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-Api-Key", "type": "string" },
+      { "key": "value", "value": "apikey-literal", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "events": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["console.log('collection pre-request');"] } }]
+}

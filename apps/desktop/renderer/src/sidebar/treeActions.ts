@@ -1,6 +1,6 @@
 import { emptyRequestDraft } from '@aegis/core';
 import { api, errorMessage } from '../lib/api';
-import { planCollectionReorder, planNodeMove, type DropPosition } from '../lib/collectionTree';
+import { planCollectionReorder, planNodeMove, requestIdsUnder, type DropPosition, type MovePlan } from '../lib/collectionTree';
 import { useApp } from '../store/app';
 import { useUi } from '../store/ui';
 
@@ -112,12 +112,17 @@ export async function renameEntity(kind: EntityKind, id: string, collectionId: s
   }
 }
 
-export async function duplicateEntity(kind: 'collection' | 'request', id: string, collectionId: string): Promise<void> {
+export async function duplicateEntity(kind: EntityKind, id: string, collectionId: string): Promise<void> {
   try {
     if (kind === 'collection') {
       const c = await api.collections.duplicate({ id });
       await app().refreshCollections();
       await expandNode(c.id, true);
+    } else if (kind === 'folder') {
+      const f = await api.folders.duplicate({ id });
+      useApp.setState((s) => ({ expanded: { ...s.expanded, [collectionId]: true, [f.id]: true } }));
+      await app().refreshTree(collectionId);
+      app().toast(`Folder "${f.name}" created`, 'success');
     } else {
       const r = await api.requests.duplicate({ id });
       await app().refreshTree(collectionId);
@@ -126,6 +131,42 @@ export async function duplicateEntity(kind: 'collection' | 'request', id: string
   } catch (e) {
     fail(e);
   }
+}
+
+/**
+ * Move a folder or request to `plan` (same or another collection). Open tabs of the moved requests are
+ * re-pointed BEFORE the trees refresh so `syncTabsAfterChange` does not close them.
+ */
+export async function moveNode(dragged: { id: string; kind: 'folder' | 'request'; collectionId: string }, plan: MovePlan): Promise<void> {
+  const targetCollectionId = plan.collectionId ?? dragged.collectionId;
+  const cross = targetCollectionId !== dragged.collectionId;
+  const movedRequestIds = new Set(dragged.kind === 'request' ? [dragged.id] : requestIdsUnder(app().trees[dragged.collectionId] ?? [], dragged.id));
+  try {
+    await api.requests.move({ kind: dragged.kind, id: dragged.id, parentFolderId: plan.parentFolderId, index: plan.index, ...(cross ? { collectionId: targetCollectionId } : {}) });
+    useApp.setState((s) => ({
+      expanded: { ...s.expanded, [targetCollectionId]: true, ...(plan.parentFolderId ? { [plan.parentFolderId]: true } : {}) },
+      tabs: s.tabs.map((t) => {
+        if (!t.requestId || !movedRequestIds.has(t.requestId)) return t;
+        return { ...t, collectionId: targetCollectionId, ...(dragged.kind === 'request' ? { folderId: plan.parentFolderId } : {}) };
+      }),
+    }));
+    await app().refreshTree(targetCollectionId);
+    if (cross) await app().refreshTree(dragged.collectionId);
+    app().syncTabsAfterChange();
+    if (cross) {
+      const name = app().collections.find((c) => c.id === targetCollectionId)?.name ?? 'the other collection';
+      app().toast(`Moved to "${name}". It now inherits that collection's auth, scripts and variables.`, 'success');
+    }
+  } catch (e) {
+    fail(e);
+    await app().refreshTree(dragged.collectionId).catch(() => undefined);
+    if (cross) await app().refreshTree(targetCollectionId).catch(() => undefined);
+  }
+}
+
+/** Context-menu "Move to…": opens the picker modal. */
+export function moveEntity(kind: 'folder' | 'request', id: string, collectionId: string, name: string): void {
+  useUi.getState().openModal('move-to', { kind, id, collectionId, name });
 }
 
 export async function deleteEntity(kind: EntityKind, id: string, name: string, collectionId: string): Promise<void> {
@@ -161,21 +202,13 @@ export async function deleteEntity(kind: EntityKind, id: string, name: string, c
 
 /** Drop of a folder/request onto a row. Returns false when the drop is invalid. */
 export async function dropNode(dragged: { id: string; kind: 'folder' | 'request'; collectionId: string }, target: { id: string; kind: EntityKind; collectionId: string }, position: DropPosition): Promise<boolean> {
-  const nodes = app().trees[dragged.collectionId];
+  // The plan needs the TARGET collection's tree (a collapsed target collection may not be loaded yet).
+  if (!app().trees[target.collectionId]) await ensureTree(target.collectionId);
+  const nodes = app().trees[target.collectionId];
   if (!nodes) return false;
   const plan = planNodeMove(nodes, dragged, target, position);
   if (!plan) return false;
-  try {
-    await api.requests.move({ kind: dragged.kind, id: dragged.id, parentFolderId: plan.parentFolderId, index: plan.index });
-    if (plan.parentFolderId) useApp.setState((s) => ({ expanded: { ...s.expanded, [plan.parentFolderId!]: true } }));
-    if (dragged.kind === 'request') {
-      useApp.setState((s) => ({ tabs: s.tabs.map((t) => (t.requestId === dragged.id ? { ...t, folderId: plan.parentFolderId } : t)) }));
-    }
-    await afterMutation(dragged.collectionId);
-  } catch (e) {
-    fail(e);
-    await app().refreshTree(dragged.collectionId).catch(() => undefined);
-  }
+  await moveNode(dragged, plan);
   return true;
 }
 

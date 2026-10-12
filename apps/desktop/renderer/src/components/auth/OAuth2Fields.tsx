@@ -5,6 +5,7 @@ import { useApp } from '../../store/app';
 import { Badge, Button, Spinner } from '../ui';
 import { AuthRow, SecretParam, SelectParam, TextParam } from './AuthRow';
 import { describeExpiry, OAUTH2_GRANTS, oauthTokenStatus, param } from './authModel';
+import { DeviceCodePanel, useDeviceCodeFlow } from './DeviceCodeFlow';
 
 export interface OAuthContext {
   workspaceId: string;
@@ -21,12 +22,19 @@ export function OAuth2Fields({ auth, set, onChange, context }: { auth: AuthConfi
   const [error, setError] = useState<string | null>(null);
   const grant = param(auth, 'grant_type', 'authorization_code_with_pkce');
   const interactive = grant === 'authorization_code' || grant === 'authorization_code_with_pkce';
+  const deviceGrant = grant === 'device_code';
   const status = oauthTokenStatus(auth);
   const workspaceId = context?.workspaceId ?? storeWorkspace;
   const common = { auth, set };
+  const device = useDeviceCodeFlow(auth, workspaceId ?? '', context, (params) => onChange({ ...auth, params: { ...auth.params, ...params } }));
 
   const getToken = async () => {
     if (!workspaceId) return;
+    if (deviceGrant) {
+      setError(null);
+      await device.start();
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -56,6 +64,7 @@ export function OAuth2Fields({ auth, set, onChange, context }: { auth: AuthConfi
     <>
       <SelectParam {...common} name="grant_type" label="Grant type" fallback="authorization_code_with_pkce" options={OAUTH2_GRANTS} />
       {interactive && <TextParam {...common} name="authUrl" label="Auth URL" placeholder="https://example.com/oauth/authorize" />}
+      {deviceGrant && <TextParam {...common} name="deviceAuthUrl" label="Device authorization URL" placeholder="https://example.com/oauth/device/code" hint="RFC 8628 device authorization endpoint." />}
       <TextParam {...common} name="accessTokenUrl" label="Access token URL" placeholder="https://example.com/oauth/token" />
       {interactive && <TextParam {...common} name="redirect_uri" label="Callback URL" placeholder="http://localhost:8080/callback" hint="Must match the redirect URI registered for the client." />}
       <TextParam {...common} name="clientId" label="Client ID" />
@@ -99,7 +108,7 @@ export function OAuth2Fields({ auth, set, onChange, context }: { auth: AuthConfi
           {status.state === 'present' && status.expiresAt !== undefined && <span className="au-dim">{describeExpiry(status.expiresAt)}</span>}
           {param(auth, 'refreshToken') !== '' && <span className="au-dim">refresh token stored</span>}
           <span className="au-spacer" />
-          <Button variant="primary" size="sm" disabled={busy || !workspaceId} onClick={() => void getToken()}>
+          <Button variant="primary" size="sm" disabled={busy || !workspaceId || device.state.phase !== 'idle'} onClick={() => void getToken()}>
             {busy ? <Spinner label="Requesting token" /> : null} Get New Access Token
           </Button>
           <Button size="sm" disabled={status.state === 'none' && param(auth, 'refreshToken') === ''} onClick={clearToken}>
@@ -107,9 +116,10 @@ export function OAuth2Fields({ auth, set, onChange, context }: { auth: AuthConfi
           </Button>
         </div>
         {busy && interactive && <div className="field-hint">Complete the sign-in in the window that opened. This can take a while.</div>}
-        {error && (
+        {deviceGrant && <DeviceCodePanel state={device.state} onCancel={device.cancel} />}
+        {(error ?? device.state.error) && (
           <div className="banner banner-error" role="alert">
-            <span>{error}</span>
+            <span>{error ?? device.state.error}</span>
           </div>
         )}
       </AuthRow>

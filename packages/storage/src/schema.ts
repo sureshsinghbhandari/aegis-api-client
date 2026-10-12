@@ -377,6 +377,8 @@ export const collectionRunItems = sqliteTable(
     error: text('error'),
     testsJson: text('tests_json'),
     sortOrder: integer('sort_order').notNull().default(0),
+    /** Redacted response head (JSON), only when the run was started with `keepResponses`. Never contains Authorization/Cookie headers. */
+    responseJson: text('response_json'),
   },
   (t) => [index('idx_collection_run_items_run').on(t.runId, t.sortOrder)],
 );

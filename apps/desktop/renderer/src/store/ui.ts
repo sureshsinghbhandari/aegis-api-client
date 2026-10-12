@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type ModalId = 'settings' | 'environments' | 'import' | 'export' | 'runner' | 'search' | 'about' | 'workspaces' | 'collection-edit' | 'backup';
+export type ModalId = 'settings' | 'environments' | 'import' | 'export' | 'runner' | 'search' | 'about' | 'workspaces' | 'collection-edit' | 'backup' | 'find-replace' | 'cookie-edit' | 'move-to' | 'code' | 'curl-import';
 
 export interface ConfirmOptions {
   title: string;

@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { TreeNode } from '@aegis/core';
 import { api, errorMessage } from '../lib/api';
-import { effectiveIterations, previewDataFile, type DataPreview } from '../lib/runner-helpers';
+import { effectiveIterations, moveId, previewDataFile, requestIdsForRun, runnableRequestsInScope, type DataPreview } from '../lib/runner-helpers';
 import { parseBoundedInt } from '../lib/settings-helpers';
 import { folderOptions } from '../lib/tree-helpers';
-import { Button, Checkbox, EmptyState, ErrorBanner, Field, Modal } from '../components/ui';
+import { Button, Checkbox, EmptyState, ErrorBanner, Field, MethodLabel, Modal } from '../components/ui';
 import { useApp } from '../store/app';
 import { useRunner } from '../store/runner';
 import { useUi } from '../store/ui';
@@ -26,10 +26,14 @@ export default function RunnerModal({ props }: ModalComponentProps) {
   const [iterations, setIterations] = useState('1');
   const [delayMs, setDelayMs] = useState('0');
   const [stopOnFailure, setStopOnFailure] = useState(false);
+  const [keepResponses, setKeepResponses] = useState(false);
   const [data, setData] = useState<{ name: string; content: string; preview: DataPreview } | null>(null);
   const [dataError, setDataError] = useState<string | null>(null);
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [treeError, setTreeError] = useState<string | null>(null);
+  const [showRequests, setShowRequests] = useState(false);
+  const [order, setOrder] = useState<string[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     useRunner.getState().clearError();
@@ -52,12 +56,22 @@ export default function RunnerModal({ props }: ModalComponentProps) {
     };
   }, [collectionId]);
 
+  const scoped = useMemo(() => runnableRequestsInScope(tree, folderId || null), [tree, folderId]);
+  const defaultOrder = useMemo(() => scoped.map((r) => r.id), [scoped]);
+  // Whenever the scope changes, start again from "everything, tree order".
+  useEffect(() => {
+    setOrder(defaultOrder);
+    setSelected(new Set(defaultOrder));
+  }, [defaultOrder]);
+  const byId = useMemo(() => new Map(scoped.map((r) => [r.id, r])), [scoped]);
+  const requestIds = requestIdsForRun(order, selected, defaultOrder);
+  const chosenCount = order.filter((id) => selected.has(id)).length;
+
   const collection = collections.find((c) => c.id === collectionId);
   const iterN = parseBoundedInt(iterations, 1, 100_000);
   const delayN = parseBoundedInt(delayMs, 0, 600_000);
-  const runnableCount = tree.filter((n) => n.kind === 'request').length;
   const effective = iterN === null ? null : effectiveIterations(iterN, data?.preview.rowCount ?? null);
-  const valid = Boolean(collectionId && workspaceId && iterN !== null && delayN !== null);
+  const valid = Boolean(collectionId && workspaceId && iterN !== null && delayN !== null && chosenCount > 0);
 
   const onFile = async (file: File | undefined) => {
     setDataError(null);
@@ -93,6 +107,8 @@ export default function RunnerModal({ props }: ModalComponentProps) {
       iterations: effective ?? iterN,
       delayMs: delayN,
       stopOnFailure,
+      ...(keepResponses ? { keepResponses: true } : {}),
+      ...(requestIds ? { requestIds } : {}),
       ...(data ? { dataFile: { name: data.name, content: data.content } } : {}),
       collectionName: collection.name + (folderId ? ` / ${folderOptions(tree).find((f) => f.id === folderId)?.label ?? ''}` : ''),
     });
@@ -104,11 +120,18 @@ export default function RunnerModal({ props }: ModalComponentProps) {
   };
 
   const activeEnv = environments.find((e) => e.id === environmentId);
+  const toggle = (id: string, on: boolean) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
 
   return (
     <Modal
       title="Collection runner"
-      width={620}
+      width={640}
       onClose={() => useUi.getState().closeModal()}
       footer={
         <>
@@ -133,7 +156,7 @@ export default function RunnerModal({ props }: ModalComponentProps) {
                 ))}
               </select>
             </Field>
-            <Field label="Folder (optional)" hint={treeError ?? `${runnableCount} request(s) in the collection`}>
+            <Field label="Folder (optional)" hint={treeError ?? `${scoped.length} request(s) in scope`}>
               <select value={folderId} onChange={(e) => setFolderId(e.target.value)}>
                 <option value="">Whole collection</option>
                 {folderOptions(tree).map((f) => (
@@ -144,6 +167,64 @@ export default function RunnerModal({ props }: ModalComponentProps) {
               </select>
             </Field>
           </div>
+
+          <div className="field">
+            <button type="button" className="link-btn" aria-expanded={showRequests} onClick={() => setShowRequests((v) => !v)}>
+              {showRequests ? '▾' : '▸'} Requests to run: {chosenCount} of {scoped.length}
+              {requestIds ? ' (custom selection / order)' : ' (all, in collection order)'}
+            </button>
+            {showRequests && (
+              <div className="runner-select" role="group" aria-label="Requests to run">
+                <div className="set-row">
+                  <Button size="sm" variant="ghost" onClick={() => setSelected(new Set(order))}>
+                    Select all
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                    Select none
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setOrder(defaultOrder);
+                      setSelected(new Set(defaultOrder));
+                    }}
+                  >
+                    Reset order
+                  </Button>
+                </div>
+                {order.length === 0 ? (
+                  <div className="field-hint">No requests in this scope.</div>
+                ) : (
+                  <ol className="runner-select-list">
+                    {order.map((id, i) => {
+                      const r = byId.get(id);
+                      if (!r) return null;
+                      return (
+                        <li key={id} className={selected.has(id) ? '' : 'runner-select-off'}>
+                          <label>
+                            <input type="checkbox" checked={selected.has(id)} onChange={(e) => toggle(id, e.target.checked)} />
+                            <MethodLabel method={r.method} /> <span className="runner-select-name">{r.name}</span>
+                            {r.path && <span className="field-hint"> {r.path}</span>}
+                          </label>
+                          <span className="runner-select-move">
+                            <button type="button" className="link-btn" aria-label={`Move ${r.name} up`} disabled={i === 0} onClick={() => setOrder((o) => moveId(o, id, -1))}>
+                              ▲
+                            </button>
+                            <button type="button" className="link-btn" aria-label={`Move ${r.name} down`} disabled={i === order.length - 1} onClick={() => setOrder((o) => moveId(o, id, 1))}>
+                              ▼
+                            </button>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+                <span className="field-hint">Unchecked requests are skipped; the list order is the run order. pm.execution.setNextRequest can still jump between the selected requests.</span>
+              </div>
+            )}
+          </div>
+
           <Field label="Environment">
             <select value={environmentId} onChange={(e) => setEnvironmentId(e.target.value)}>
               <option value="">No environment</option>
@@ -167,6 +248,7 @@ export default function RunnerModal({ props }: ModalComponentProps) {
             </Field>
           </div>
           <Checkbox checked={stopOnFailure} onChange={setStopOnFailure} label="Stop the run when a request or test fails" />
+          <Checkbox checked={keepResponses} onChange={setKeepResponses} label="Keep responses with the results (redacted: first 64 KiB of the body, no Authorization/Cookie headers)" />
 
           <div className="field" style={{ marginTop: 14 }}>
             <label className="field-label" htmlFor="runner-data">

@@ -55,9 +55,25 @@ export function hasChanges(c: ScopeChanges): boolean {
   return c.cleared || c.unset.length > 0 || Object.keys(c.set).length > 0;
 }
 
+/** Best-effort JSON text of a GraphQL body for scripts (invalid variables JSON is passed through as a string; sending validates it). */
+function graphqlSnapshotText(graphql: RequestBody['graphql']): string {
+  const g = graphql ?? { query: '', variables: '' };
+  const doc: Record<string, unknown> = { query: g.query };
+  const vars = (g.variables ?? '').trim();
+  if (vars !== '') {
+    try {
+      doc.variables = JSON.parse(vars);
+    } catch {
+      doc.variables = g.variables;
+    }
+  }
+  if (g.operationName && g.operationName.trim() !== '') doc.operationName = g.operationName.trim();
+  return JSON.stringify(doc);
+}
+
 export function draftToSnapshot(draft: RequestDraft): ScriptRequestSnapshot {
   const b = draft.body;
-  const body: ScriptRequestSnapshot['body'] = { mode: b.mode };
+  const body: ScriptRequestSnapshot['body'] = { mode: b.mode === 'graphql' ? 'raw' : b.mode };
   if (b.mode === 'raw') {
     body.raw = b.raw ?? '';
     if (b.rawLanguage) body.rawLanguage = b.rawLanguage;
@@ -65,6 +81,11 @@ export function draftToSnapshot(draft: RequestDraft): ScriptRequestSnapshot {
     body.urlencoded = (b.urlencoded ?? []).map((e) => ({ ...e }));
   } else if (b.mode === 'formdata') {
     body.formdata = (b.formData ?? []).map((f) => ({ key: f.key, value: f.value, type: f.type, enabled: f.enabled }));
+  } else if (b.mode === 'graphql') {
+    // Scripts see the JSON document that is sent on the wire (`{query, variables, operationName}`).
+    body.mode = 'raw';
+    body.raw = graphqlSnapshotText(b.graphql);
+    body.rawLanguage = 'json';
   }
   return {
     method: draft.method,
@@ -111,6 +132,7 @@ export function collectDraftStrings(draft: RequestDraft): string[] {
   for (const e of [...draft.headers, ...draft.queryParams, ...draft.pathVariables]) if (e.enabled) out.push(e.key, e.value);
   const b = draft.body;
   if (b.raw) out.push(b.raw);
+  if (b.mode === 'graphql' && b.graphql) out.push(b.graphql.query, b.graphql.variables, b.graphql.operationName ?? '');
   for (const e of b.urlencoded ?? []) if (e.enabled) out.push(e.key, e.value);
   for (const f of b.formData ?? []) if (f.enabled) out.push(f.key, f.value);
   for (const v of Object.values(draft.auth.params)) if (typeof v === 'string') out.push(v);

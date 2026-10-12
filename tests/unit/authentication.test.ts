@@ -186,7 +186,9 @@ describe('OAuth 2.0', () => {
 describe('registry', () => {
   it('rejects unknown and non-executable (preserved) types with a clear error', async () => {
     const r = createDefaultAuthRegistry();
-    await expect(r.apply({ type: 'custom', params: { providerId: 'digest' } }, ctx())).rejects.toThrow(/cannot be executed/);
+    await expect(r.apply({ type: 'custom', params: { providerId: 'ntlm' } }, ctx())).rejects.toThrow(/cannot be executed/);
+    // digest/hawk/edgegrid/asap are executable custom providers since this version (see authentication-extra.test.ts)
+    await expect(r.apply({ type: 'custom', params: { providerId: 'digest' } }, ctx())).rejects.toThrow(/requires a username/);
     await expect(new AuthRegistry().apply({ type: 'bearer', params: {} }, ctx())).rejects.toThrow(/Unknown authentication type/);
     r.register({ type: 'my-sso', apply: () => ({ headers: [{ name: 'X-SSO', value: '1' }], query: [], notes: [] }) });
     expect((await r.apply({ type: 'custom', params: { providerId: 'my-sso' } }, ctx())).headers[0]!.name).toBe('X-SSO');

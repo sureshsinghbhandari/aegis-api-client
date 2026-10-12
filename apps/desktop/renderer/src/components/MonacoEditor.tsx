@@ -6,6 +6,7 @@ import htmlWorker from 'monaco-editor/language/html/html.worker?worker';
 import tsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import { useEffect, useRef } from 'react';
 import { useApp } from '../store/app';
+import { decorateVariables, installMonacoVariableSupport } from './monacoVariables';
 
 // Workers are bundled with the app (served from app://), so the strict CSP needs no remote script sources.
 (self as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
@@ -28,10 +29,14 @@ export interface MonacoEditorProps {
   /** Extra TypeScript declarations (for script autocomplete), registered once per editor. */
   extraLib?: { content: string; name: string };
   onReady?(editor: monaco.editor.IStandaloneCodeEditor): void;
+  /** Highlight `{{variables}}` of the active request (unresolved ones underlined); completion/hover are always available. */
+  variableHints?: boolean;
 }
 
+installMonacoVariableSupport(monaco);
+
 /** Monaco wrapper: controlled value, theme synced with the app, automatic layout. */
-export default function MonacoEditor({ value, onChange, language = 'plaintext', readOnly, wordWrap = true, lineNumbers = true, extraLib, onReady }: MonacoEditorProps) {
+export default function MonacoEditor({ value, onChange, language = 'plaintext', readOnly, wordWrap = true, lineNumbers = true, extraLib, onReady, variableHints }: MonacoEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const changeRef = useRef(onChange);
@@ -69,9 +74,11 @@ export default function MonacoEditor({ value, onChange, language = 'plaintext', 
     const sub = editor.onDidChangeModelContent(() => changeRef.current?.(editor.getValue()));
     let lib: monaco.IDisposable | undefined;
     if (extraLib) lib = monaco.typescript.javascriptDefaults.addExtraLib(extraLib.content, extraLib.name);
+    const disposeHints = variableHints ? decorateVariables(monaco, editor) : undefined;
     onReady?.(editor);
     return () => {
       sub.dispose();
+      disposeHints?.();
       lib?.dispose();
       editor.getModel()?.dispose();
       editor.dispose();

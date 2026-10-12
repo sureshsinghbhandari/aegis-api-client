@@ -1,0 +1,46 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Recursive schemas", "version": "1" },
+  "servers": [{ "url": "https://tree.example" }],
+  "paths": {
+    "/tree": {
+      "post": {
+        "operationId": "createTree",
+        "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Node" } } } },
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Node" } } } } }
+      }
+    },
+    "/wide": {
+      "post": {
+        "operationId": "wide",
+        "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Level0" } } } },
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/loop": {
+      "get": {
+        "operationId": "loop",
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/A" } } } } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Node": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "string" },
+          "children": { "type": "array", "items": { "$ref": "#/components/schemas/Node" } },
+          "parent": { "$ref": "#/components/schemas/Node" }
+        }
+      },
+      "A": { "$ref": "#/components/schemas/B" },
+      "B": { "$ref": "#/components/schemas/A" },
+      "Leaf": { "type": "object", "properties": { "a": { "type": "string" }, "b": { "type": "string" }, "c": { "type": "string" }, "d": { "type": "string" }, "e": { "type": "string" }, "f": { "type": "string" }, "g": { "type": "string" }, "h": { "type": "string" } } },
+      "Level3": { "type": "object", "properties": { "a": { "$ref": "#/components/schemas/Leaf" }, "b": { "$ref": "#/components/schemas/Leaf" }, "c": { "$ref": "#/components/schemas/Leaf" }, "d": { "$ref": "#/components/schemas/Leaf" }, "e": { "$ref": "#/components/schemas/Leaf" }, "f": { "$ref": "#/components/schemas/Leaf" }, "g": { "$ref": "#/components/schemas/Leaf" }, "h": { "$ref": "#/components/schemas/Leaf" } } },
+      "Level2": { "type": "object", "properties": { "a": { "$ref": "#/components/schemas/Level3" }, "b": { "$ref": "#/components/schemas/Level3" }, "c": { "$ref": "#/components/schemas/Level3" }, "d": { "$ref": "#/components/schemas/Level3" }, "e": { "$ref": "#/components/schemas/Level3" }, "f": { "$ref": "#/components/schemas/Level3" }, "g": { "$ref": "#/components/schemas/Level3" }, "h": { "$ref": "#/components/schemas/Level3" } } },
+      "Level1": { "type": "object", "properties": { "a": { "$ref": "#/components/schemas/Level2" }, "b": { "$ref": "#/components/schemas/Level2" }, "c": { "$ref": "#/components/schemas/Level2" }, "d": { "$ref": "#/components/schemas/Level2" }, "e": { "$ref": "#/components/schemas/Level2" }, "f": { "$ref": "#/components/schemas/Level2" }, "g": { "$ref": "#/components/schemas/Level2" }, "h": { "$ref": "#/components/schemas/Level2" } } },
+      "Level0": { "type": "object", "properties": { "a": { "$ref": "#/components/schemas/Level1" }, "b": { "$ref": "#/components/schemas/Level1" }, "c": { "$ref": "#/components/schemas/Level1" }, "d": { "$ref": "#/components/schemas/Level1" }, "e": { "$ref": "#/components/schemas/Level1" }, "f": { "$ref": "#/components/schemas/Level1" }, "g": { "$ref": "#/components/schemas/Level1" }, "h": { "$ref": "#/components/schemas/Level1" } } }
+    }
+  }
+}

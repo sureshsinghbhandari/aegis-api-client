@@ -9,10 +9,14 @@ import {
   type Environment,
   type ExecutionResult,
   type RequestDraft,
+  type RequestExample,
   type TreeNode,
+  type WorkbenchLayout,
   type Workspace,
 } from '@aegis/core';
 import { api, errorMessage, ApiError } from '../lib/api';
+import { entriesFromResult, entryFromRunnerItem, type NetworkLogEntry } from '../lib/network-log';
+import { mergeRestoredDraft, parsePersistedTabs, serializeTabsForStorage, TABS_STORAGE_KEY } from '../lib/tab-persistence';
 
 export type SidebarView = 'collections' | 'history' | 'environments';
 export type BottomPanel = 'console' | 'runner' | 'tests';
@@ -49,11 +53,16 @@ export interface ConsoleLine extends ConsoleEntry {
   executionId: string;
 }
 
+const MAX_CONSOLE_LINES = 2000;
+const MAX_NETWORK_ENTRIES = 1000;
+
 interface AppState {
   ready: boolean;
   info: AppInfo | null;
   settings: AppSettings | null;
   theme: 'dark' | 'light';
+  /** Request/response arrangement (persisted in settings.appearance.layout). */
+  layout: WorkbenchLayout;
   workspaces: Workspace[];
   workspaceId: string | null;
   collections: Collection[];
@@ -68,6 +77,8 @@ interface AppState {
   closedTabs: OpenTab[];
   toasts: Toast[];
   consoleLines: ConsoleLine[];
+  /** Network log of the console: one entry per send, runner item and pm.sendRequest call (headers redacted). */
+  networkLog: NetworkLogEntry[];
   /** Bumped when history changes so panels refetch. */
   historyVersion: number;
   /** Incoming `menu:action` events, consumed by the UI that owns the action. */
@@ -76,6 +87,7 @@ interface AppState {
   init(): Promise<void>;
   setTheme(theme: 'dark' | 'light'): void;
   applySettings(settings: AppSettings): void;
+  setLayout(layout: WorkbenchLayout): Promise<void>;
   selectWorkspace(id: string): Promise<void>;
   refreshWorkspaces(): Promise<void>;
   refreshCollections(): Promise<void>;
@@ -91,14 +103,22 @@ interface AppState {
   closeTab(tabId: string): void;
   reopenTab(): void;
   setActiveTab(tabId: string): void;
+  /** Activate the tab `delta` positions away from the active one (wraps around). */
+  cycleTab(delta: number): void;
   updateDraft(tabId: string, patch: Partial<RequestDraft>): void;
   saveTab(tabId: string): Promise<void>;
   duplicateTab(tabId: string): void;
   renameTab(tabId: string, name: string): void;
   sendTab(tabId: string, opts?: { confirmProduction?: boolean }): Promise<void>;
   cancelTab(tabId: string): Promise<void>;
+  /** Add an example to a request; saved requests are persisted right away. */
+  addExample(tabId: string, example: RequestExample): Promise<void>;
   /** Called after a request/folder/collection was renamed or deleted elsewhere. */
   syncTabsAfterChange(): void;
+  /** Re-read clean tabs of saved requests from the database (after bulk edits such as find & replace). */
+  reloadSavedTabs(collectionId?: string): Promise<void>;
+  /** Restore the tabs persisted by the previous session (request ids + non-secret drafts). */
+  restoreTabs(): Promise<void>;
 
   toast(message: string, kind?: Toast['kind']): void;
   dismissToast(id: string): void;
@@ -115,6 +135,7 @@ export const useApp = create<AppState>((set, get) => ({
   info: null,
   settings: null,
   theme: 'dark',
+  layout: 'stacked',
   workspaces: [],
   workspaceId: null,
   collections: [],
@@ -129,6 +150,7 @@ export const useApp = create<AppState>((set, get) => ({
   closedTabs: [],
   toasts: [],
   consoleLines: [],
+  networkLog: [],
   historyVersion: 0,
   pendingMenuAction: null,
 
@@ -140,6 +162,9 @@ export const useApp = create<AppState>((set, get) => ({
     set({ info, workspaces, workspaceId });
     if (workspaceId) await get().selectWorkspace(workspaceId);
     api.events.on('menu:action', ({ action }) => get().triggerMenuAction(action));
+    api.events.on('runner:item', (ev) => pushNetwork([entryFromRunnerItem(ev)]));
+    await get().restoreTabs();
+    startTabPersistence();
     set({ ready: true });
   },
 
@@ -152,7 +177,18 @@ export const useApp = create<AppState>((set, get) => ({
     const pref = settings.appearance.theme;
     const theme = pref === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : pref;
     document.documentElement.dataset.theme = theme;
-    set({ settings, theme });
+    const layout: WorkbenchLayout = settings.appearance.layout === 'side-by-side' ? 'side-by-side' : 'stacked';
+    set({ settings, theme, layout });
+  },
+
+  async setLayout(layout) {
+    set({ layout });
+    try {
+      const settings = await api.settings.update({ patch: { appearance: { layout } } });
+      get().applySettings(settings);
+    } catch (e) {
+      get().toast(errorMessage(e), 'error');
+    }
   },
 
   async selectWorkspace(id) {
@@ -248,6 +284,14 @@ export const useApp = create<AppState>((set, get) => ({
 
   setActiveTab: (activeTabId) => set({ activeTabId }),
 
+  cycleTab(delta) {
+    const { tabs, activeTabId } = get();
+    if (tabs.length < 2) return;
+    const idx = Math.max(0, tabs.findIndex((t) => t.tabId === activeTabId));
+    const next = tabs[(((idx + delta) % tabs.length) + tabs.length) % tabs.length];
+    if (next) set({ activeTabId: next.tabId });
+  },
+
   updateDraft(tabId, patch) {
     set((s) => ({ tabs: s.tabs.map((t) => (t.tabId === tabId ? { ...t, draft: { ...t.draft, ...patch } } : t)) }));
   },
@@ -276,7 +320,7 @@ export const useApp = create<AppState>((set, get) => ({
       set((s) => ({
         tabs: s.tabs.map((t) => {
           if (t.tabId !== tabId) return t;
-          const next = { ...t.draft, auth: draft.auth };
+          const next = { ...t.draft, auth: draft.auth, examples: draft.examples };
           return { ...t, requestId: id, collectionId, folderId, draft: next, savedJson: draftJson(next) };
         }),
       }));
@@ -320,7 +364,8 @@ export const useApp = create<AppState>((set, get) => ({
       if (previous) void api.responses.release({ responseId: previous }).catch(() => undefined);
       patch({ status: result.ok ? 'done' : 'error', executionId, result });
       const lines: ConsoleLine[] = result.console.map((c) => ({ ...c, id: newId(), request: tab.draft.name, executionId }));
-      if (lines.length) set((s) => ({ consoleLines: [...s.consoleLines, ...lines].slice(-2000) }));
+      if (lines.length) set((s) => ({ consoleLines: [...s.consoleLines, ...lines].slice(-MAX_CONSOLE_LINES) }));
+      pushNetwork(entriesFromResult(result, { request: tab.draft.name, executionId, fallbackMethod: tab.draft.method, fallbackUrl: tab.draft.url }));
       get().bumpHistory();
       await get().refreshEnvironments();
     } catch (e) {
@@ -334,6 +379,14 @@ export const useApp = create<AppState>((set, get) => ({
     if (tab?.response.executionId) await api.execution.cancel({ executionId: tab.response.executionId }).catch(() => undefined);
   },
 
+  async addExample(tabId, example) {
+    const tab = get().tabs.find((t) => t.tabId === tabId);
+    if (!tab) return;
+    get().updateDraft(tabId, { examples: [...tab.draft.examples, example] });
+    if (tab.requestId) await get().saveTab(tabId);
+    else get().toast('Example added. Save the request to keep it.', 'info');
+  },
+
   syncTabsAfterChange() {
     // Close tabs whose saved request no longer exists.
     const known = new Set(Object.values(get().trees).flatMap((nodes) => nodes.filter((n) => n.kind === 'request').map((n) => n.id)));
@@ -343,16 +396,84 @@ export const useApp = create<AppState>((set, get) => ({
     }));
   },
 
+  async reloadSavedTabs(collectionId) {
+    const targets = get().tabs.filter((t) => t.requestId && (!collectionId || t.collectionId === collectionId) && !isDirty(t));
+    for (const tab of targets) {
+      try {
+        const r = await api.requests.get({ id: tab.requestId! });
+        const { id: _i, collectionId: cid, folderId, sortOrder: _s, createdAt: _c, updatedAt: _u, ...draft } = r;
+        set((s) => ({ tabs: s.tabs.map((t) => (t.tabId === tab.tabId ? { ...t, collectionId: cid, folderId, draft, savedJson: draftJson(draft) } : t)) }));
+      } catch {
+        /* deleted meanwhile: syncTabsAfterChange handles it */
+      }
+    }
+  },
+
+  async restoreTabs() {
+    const persisted = parsePersistedTabs(safeGet(TABS_STORAGE_KEY));
+    if (!persisted || get().tabs.length > 0) return;
+    const restored: OpenTab[] = [];
+    let missing = 0;
+    for (const p of persisted.tabs) {
+      if (p.requestId) {
+        try {
+          const r = await api.requests.get({ id: p.requestId });
+          const { id, collectionId, folderId, sortOrder: _s, createdAt: _c, updatedAt: _u, ...saved } = r;
+          const draft = p.draft ? mergeRestoredDraft(p.draft, saved) : saved;
+          restored.push({ tabId: newId(), requestId: id, collectionId, folderId, draft, savedJson: draftJson(saved), response: { status: 'idle' } });
+        } catch {
+          missing += 1; // deleted since the last session
+        }
+      } else if (p.draft) {
+        restored.push({ tabId: newId(), requestId: null, collectionId: p.collectionId, folderId: p.folderId, draft: p.draft, savedJson: '', response: { status: 'idle' } });
+      }
+    }
+    if (restored.length === 0) return;
+    const active = restored[Math.min(persisted.activeIndex, restored.length - 1)]!;
+    set((s) => ({ tabs: [...s.tabs, ...restored], activeTabId: s.activeTabId ?? active.tabId }));
+    if (missing > 0) get().toast(`${missing} tab(s) could not be restored: the request no longer exists.`, 'info');
+  },
+
   toast(message, kind = 'info') {
     const id = newId();
     set((s) => ({ toasts: [...s.toasts, { id, kind, message }] }));
     setTimeout(() => get().dismissToast(id), kind === 'error' ? 8000 : 3500);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
-  clearConsole: () => set({ consoleLines: [] }),
+  clearConsole: () => set({ consoleLines: [], networkLog: [] }),
   bumpHistory: () => set((s) => ({ historyVersion: s.historyVersion + 1 })),
   triggerMenuAction: (action) => set({ pendingMenuAction: { action, nonce: Date.now() } }),
 }));
+
+function pushNetwork(entries: NetworkLogEntry[]): void {
+  if (entries.length === 0) return;
+  useApp.setState((s) => ({ networkLog: [...s.networkLog, ...entries].slice(-MAX_NETWORK_ENTRIES) }));
+}
+
+let persistenceStarted = false;
+/** Write the open tabs (ids + non-secret drafts) to localStorage, debounced. */
+function startTabPersistence(): void {
+  if (persistenceStarted) return;
+  persistenceStarted = true;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let last: { tabs: OpenTab[]; activeTabId: string | null } | null = null;
+  const flush = () => {
+    timer = null;
+    const { tabs, activeTabId } = useApp.getState();
+    const index = tabs.findIndex((t) => t.tabId === activeTabId);
+    safeSet(TABS_STORAGE_KEY, serializeTabsForStorage(tabs, index === -1 ? 0 : index));
+  };
+  useApp.subscribe((s) => {
+    if (last && last.tabs === s.tabs && last.activeTabId === s.activeTabId) return;
+    last = { tabs: s.tabs, activeTabId: s.activeTabId };
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(flush, 400);
+  });
+  window.addEventListener('beforeunload', () => {
+    if (timer) clearTimeout(timer);
+    flush();
+  });
+}
 
 function safeGet(key: string): string | null {
   try {

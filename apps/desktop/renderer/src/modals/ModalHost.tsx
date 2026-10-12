@@ -17,6 +17,11 @@ const REGISTRY: Record<ModalId, React.LazyExoticComponent<ComponentType<ModalCom
   workspaces: lazy(() => import('./WorkspacesModal')),
   'collection-edit': lazy(() => import('./CollectionEditModal')),
   backup: lazy(() => import('./BackupModal')),
+  'find-replace': lazy(() => import('./FindReplaceModal')),
+  'cookie-edit': lazy(() => import('./CookieEditModal')),
+  code: lazy(() => import('./CodeSnippetModal')),
+  'curl-import': lazy(() => import('./CurlImportModal')),
+  'move-to': lazy(() => import('./MoveToModal')),
 };
 
 export function ModalHost() {

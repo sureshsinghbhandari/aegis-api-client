@@ -1,4 +1,4 @@
-import type { ImportPreview, ImportProgress, ImportSeverity, ImportStage, ImportWarningModel } from '@aegis/core';
+import type { ImportPreview, ImportProgress, ImportSeverity, ImportSourceKind, ImportStage, ImportWarningModel } from '@aegis/core';
 import { formatCount, truncate } from './ui-format';
 
 export const IMPORT_STAGES: readonly ImportStage[] = ['Parsing', 'Validating', 'Importing', 'Saving', 'Finalizing'];
@@ -44,14 +44,49 @@ export function previewTitleLabel(kind: ImportPreview['kind']): string {
       return 'Backup';
     case 'aegis-workspace':
       return 'Workspace';
+    case 'openapi':
+      return 'OpenAPI';
+    case 'swagger':
+      return 'Swagger 2.0';
+    case 'har':
+      return 'HAR';
+    case 'insomnia':
+      return 'Insomnia';
+    case 'postman-v1':
+      return 'Collection (v1)';
+    case 'postman-dump':
+      return 'Postman data dump';
   }
 }
 
+/** User-facing import choices. `kind` is sent to the main process; `extensions` drives the file hint. */
+export const IMPORT_KINDS: ReadonlyArray<{ id: ImportSourceKind; label: string; hint: string; extensions: string }> = [
+  { id: 'auto', label: 'Auto-detect', hint: 'Recognises every supported format from the file content (Postman v1/v2, data dump, OpenAPI/Swagger, HAR, Insomnia, Aegis workspace).', extensions: '.json, .yaml, .har' },
+  { id: 'postman-collection', label: 'Postman Collection (v2.0 / v2.1 / v1)', hint: 'A collection exported from Postman or another tool as JSON.', extensions: '.json' },
+  { id: 'postman-environment', label: 'Postman Environment / Globals', hint: 'An environment or globals file exported from Postman.', extensions: '.json' },
+  { id: 'openapi', label: 'OpenAPI 3.0 / 3.1 or Swagger 2.0 (JSON, YAML)', hint: 'Operations become requests grouped by tag; servers[0] becomes {{baseUrl}}; examples are generated from schemas. $refs are resolved inside the file only.', extensions: '.json, .yaml, .yml' },
+  { id: 'har', label: 'HAR 1.2 (HTTP Archive)', hint: 'Recorded browser or proxy traffic. Credentials in Authorization/Cookie headers are not imported.', extensions: '.har, .json' },
+  { id: 'insomnia', label: 'Insomnia v4 export', hint: 'Workspaces, folders, requests and environments from an Insomnia export file.', extensions: '.json, .yaml' },
+  { id: 'postman-dump', label: 'Postman data dump', hint: 'The "Export data" file from Postman settings: all collections, environments and globals at once.', extensions: '.json' },
+  { id: 'aegis-workspace', label: 'Aegis workspace file', hint: 'A file written by Workspace -> Export. It is restored as a new workspace.', extensions: '.aegis-workspace.json' },
+  { id: 'backup', label: 'Aegis Backup', hint: 'A backup created with "Backup…". Encrypted backups ask for their passphrase.', extensions: '.json, .aegisbackup' },
+];
+
+export function asImportKind(value: unknown): ImportSourceKind {
+  return IMPORT_KINDS.some((k) => k.id === value) ? (value as ImportSourceKind) : 'auto';
+}
+
+/** Kinds whose result may create a new workspace (the sidebar must refresh its workspace list). */
+export function importCreatesWorkspace(kind: ImportPreview['kind']): boolean {
+  return kind === 'aegis-backup' || kind === 'aegis-workspace';
+}
+
 /** The fixed-form preview lines: "Collection: <name>", Folders, Requests, Variables, Scripts, Examples. */
-export function previewSummaryLines(preview: Pick<ImportPreview, 'kind' | 'name' | 'stats'>): string[] {
+export function previewSummaryLines(preview: Pick<ImportPreview, 'kind' | 'name' | 'stats' | 'collections' | 'environments'>): string[] {
   const { stats } = preview;
+  const multi = preview.collections !== undefined && preview.environments !== undefined ? ` (${formatCount(preview.collections)} collections, ${formatCount(preview.environments)} environments)` : '';
   return [
-    `${previewTitleLabel(preview.kind)}: ${preview.name}`,
+    `${previewTitleLabel(preview.kind)}: ${preview.name}${multi}`,
     `Folders: ${formatCount(stats.folders)}`,
     `Requests: ${formatCount(stats.requests)}`,
     `Variables: ${formatCount(stats.variables)}`,

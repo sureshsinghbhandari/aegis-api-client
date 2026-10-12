@@ -24,40 +24,50 @@ export async function copyText(text: string, what = 'Copied'): Promise<void> {
   }
 }
 
-/** Resolves the full text of a response body (preview when complete, chunked reads otherwise). */
-export function useResponseBody(r: ResponseView): ResponseBody {
-  const kind = useMemo(() => detectContentKind(r.contentType, r.bodyPreview.slice(0, 256), r.isBinary), [r.contentType, r.bodyPreview, r.isBinary]);
+const EMPTY: ResponseBody = { kind: 'text', text: null, loading: false, error: null, large: false };
+
+/** Resolves the full text of a response body (preview when complete, chunked reads otherwise). Accepts null when there is no response yet. */
+export function useResponseBody(r: ResponseView | null): ResponseBody {
+  const contentType = r?.contentType ?? '';
+  const bodyPreview = r?.bodyPreview ?? '';
+  const isBinary = r?.isBinary ?? false;
+  const responseId = r?.responseId ?? '';
+  const size = r?.size ?? 0;
+  const previewBytes = r?.previewBytes ?? 0;
+
+  const kind = useMemo(() => detectContentKind(contentType, bodyPreview.slice(0, 256), isBinary), [contentType, bodyPreview, isBinary]);
   const textual = kind === 'json' || kind === 'xml' || kind === 'html' || kind === 'text';
-  const large = r.size > LARGE_BODY_BYTES;
-  const complete = r.previewBytes >= r.size;
+  const large = size > LARGE_BODY_BYTES;
+  const complete = previewBytes >= size;
   const [fetched, setFetched] = useState<{ id: string; text: string } | null>(null);
   const [state, setState] = useState<{ loading: boolean; error: string | null }>({ loading: false, error: null });
 
   useEffect(() => {
-    if (!textual || complete || large) return;
+    if (!responseId || !textual || complete || large) return;
     let cancelled = false;
     setState({ loading: true, error: null });
     (async () => {
       let offset = 0;
       let text = '';
-      while (offset < r.size) {
-        const chunk = await api.responses.readChunk({ responseId: r.responseId, offset, length: Math.min(CHUNK_BYTES * 4, r.size - offset) });
+      while (offset < size) {
+        const chunk = await api.responses.readChunk({ responseId, offset, length: Math.min(CHUNK_BYTES * 4, size - offset) });
         if (cancelled) return;
         text += chunk.text;
         if (chunk.bytesRead <= 0) break;
         offset += chunk.bytesRead;
       }
       if (!cancelled) {
-        setFetched({ id: r.responseId, text });
+        setFetched({ id: responseId, text });
         setState({ loading: false, error: null });
       }
     })().catch((e) => !cancelled && setState({ loading: false, error: errorMessage(e) }));
     return () => {
       cancelled = true;
     };
-  }, [r.responseId, r.size, textual, complete, large]);
+  }, [responseId, size, textual, complete, large]);
 
+  if (!r) return EMPTY;
   let text: string | null = null;
-  if (textual && !large) text = complete ? r.bodyPreview : fetched?.id === r.responseId ? fetched.text : null;
+  if (textual && !large) text = complete ? bodyPreview : fetched?.id === responseId ? fetched.text : null;
   return { kind, text, loading: state.loading && text === null, error: state.error, large };
 }

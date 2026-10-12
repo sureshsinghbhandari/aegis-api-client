@@ -6,6 +6,7 @@ import { MASK } from '../../lib/ui-format';
 import { Button, EmptyState, ErrorBanner, Spinner } from '../../components/ui';
 import { useApp } from '../../store/app';
 import { useUi } from '../../store/ui';
+import { CookieEditDialog } from '../CookieEditModal';
 import { SettingsGroup } from './common';
 
 export function CookiesSection() {
@@ -13,6 +14,8 @@ export function CookiesSection() {
   const [cookies, setCookies] = useState<CookieView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
+  /** `null` = closed, `undefined` cookie = add. Rendered inline because the settings dialog is itself the active modal. */
+  const [editing, setEditing] = useState<{ cookie?: CookieView } | null>(null);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -73,8 +76,23 @@ export function CookiesSection() {
   };
 
   return (
-    <SettingsGroup title="Cookies" description="Cookies received from servers are kept per workspace and sent back automatically. Values are hidden until you reveal them.">
+    <SettingsGroup title="Cookies" description="Cookies received from servers are kept per workspace and sent back automatically. Values are hidden until you reveal them. You can also add cookies by hand.">
+      {editing && workspaceId && (
+        <CookieEditDialog
+          workspaceId={workspaceId}
+          cookie={editing.cookie}
+          onClose={() => setEditing(null)}
+          onSaved={(saved) => {
+            setEditing(null);
+            useApp.getState().toast(`Cookie "${saved.name}" saved`, 'success');
+            void load();
+          }}
+        />
+      )}
       <div className="set-row">
+        <Button size="sm" variant="primary" disabled={!workspaceId} onClick={() => setEditing({})}>
+          Add cookie
+        </Button>
         <Button size="sm" onClick={() => void load()}>
           Refresh
         </Button>
@@ -123,6 +141,9 @@ export function CookiesSection() {
                           Hide
                         </Button>
                       )}
+                      <Button size="sm" variant="ghost" onClick={() => setEditing({ cookie: c })} aria-label={`Edit cookie ${c.name}`}>
+                        Edit
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={() => void del(c)} aria-label={`Delete cookie ${c.name}`}>
                         Delete
                       </Button>

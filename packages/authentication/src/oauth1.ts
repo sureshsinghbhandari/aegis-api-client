@@ -1,6 +1,12 @@
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, createSign, randomBytes } from 'node:crypto';
 import { AppError, headerValue } from '@aegis/core';
+import { loadPrivateKey } from './keys';
 import { bool, emptyResult, str, type AuthContext, type AuthParams, type AuthProvider } from './types';
+
+/** RSA signature methods (RFC 5849 section 3.4.3 and the common SHA-256/512 extensions). */
+const RSA_METHODS: Record<string, string> = { 'RSA-SHA1': 'RSA-SHA1', 'RSA-SHA256': 'RSA-SHA256', 'RSA-SHA512': 'RSA-SHA512' };
+
+export const OAUTH1_SIGNATURE_METHODS = ['HMAC-SHA1', 'HMAC-SHA256', 'HMAC-SHA512', 'RSA-SHA1', 'RSA-SHA256', 'RSA-SHA512', 'PLAINTEXT'];
 
 /** RFC 3986 percent-encoding as required by RFC 5849. */
 export function rfc3986(s: string): string {
@@ -56,8 +62,14 @@ export function oauth1Sign(params: AuthParams, context: AuthContext, fixed?: { n
   let signature: string;
   if (method === 'HMAC-SHA1') signature = createHmac('sha1', signingKey).update(baseString).digest('base64');
   else if (method === 'HMAC-SHA256') signature = createHmac('sha256', signingKey).update(baseString).digest('base64');
+  else if (method === 'HMAC-SHA512') signature = createHmac('sha512', signingKey).update(baseString).digest('base64');
   else if (method === 'PLAINTEXT') signature = signingKey;
-  else throw new AppError('AUTH_FAILED', `Unsupported OAuth 1.0 signature method "${method}". Supported: HMAC-SHA1, HMAC-SHA256, PLAINTEXT.`);
+  else if (RSA_METHODS[method]) {
+    // RSA-SHA1: the base string is signed with the consumer's private key; the consumer secret is not used.
+    const privateKey = str(params, 'privateKey');
+    if (!privateKey) throw new AppError('AUTH_FAILED', `OAuth 1.0 ${method} requires a private key.`);
+    signature = createSign(RSA_METHODS[method]!).update(baseString).sign(loadPrivateKey(privateKey, 'OAuth 1.0 private key'), 'base64');
+  } else throw new AppError('AUTH_FAILED', `Unsupported OAuth 1.0 signature method "${method}". Supported: ${OAUTH1_SIGNATURE_METHODS.join(', ')}.`);
 
   return { oauth, signature, baseString };
 }

@@ -1,5 +1,16 @@
 export type ThemePreference = 'system' | 'dark' | 'light';
+/** Request/response arrangement in the workbench. */
+export type WorkbenchLayout = 'stacked' | 'side-by-side';
 export type HistoryRetention = '7d' | '30d' | '90d' | '1y' | 'unlimited';
+
+/** `auto` negotiates HTTP/2 over TLS via ALPN; `1.1` forces HTTP/1.1; `2` prefers HTTP/2 (still falls back when the server has none). */
+export type HttpVersionPreference = 'auto' | '1.1' | '2';
+
+/** A host-name override: `host` connects to `address` (an IPv4/IPv6 literal). */
+export interface HostOverride {
+  host: string;
+  address: string;
+}
 
 export interface ProxySettings {
   mode: 'none' | 'system' | 'manual';
@@ -12,7 +23,7 @@ export interface ProxySettings {
 }
 
 export interface AppSettings {
-  appearance: { theme: ThemePreference };
+  appearance: { theme: ThemePreference; layout: WorkbenchLayout };
   history: {
     enabled: boolean;
     storeRequestBodies: boolean;
@@ -28,6 +39,18 @@ export interface AppSettings {
     /** Honored only when enterprise policy allows disabling certificate validation. */
     verifyTls: boolean;
     proxy: ProxySettings;
+    /** Default HTTP version preference (`auto` = HTTP/2 over TLS when the server offers it). */
+    httpVersion: HttpVersionPreference;
+    /**
+     * Host name overrides (like an application-local hosts file): requests to `host` connect to
+     * `address` while keeping the Host header, SNI and certificate checks for `host`.
+     * Honored only when policy `allowHostOverrides` is true; listed in the Timeline.
+     */
+    hosts: HostOverride[];
+  };
+  files: {
+    /** The only directory relative file paths (imported form-data / binary bodies) may resolve inside. Empty = relative paths are rejected. */
+    workingDirectory: string;
   };
   scripting: { timeoutMs: number; memoryLimitMb: number };
   security: {
@@ -41,7 +64,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  appearance: { theme: 'system' },
+  appearance: { theme: 'system', layout: 'stacked' },
   history: { enabled: true, storeRequestBodies: false, storeResponseBodies: false, retention: '30d' },
   network: {
     timeoutMs: 30_000,
@@ -51,7 +74,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     maxRequestBytes: 100 * 1024 * 1024,
     verifyTls: true,
     proxy: { mode: 'system', httpProxy: '', httpsProxy: '', noProxy: '', username: '', hasPassword: false },
+    httpVersion: 'auto',
+    hosts: [],
   },
+  files: { workingDirectory: '' },
   scripting: { timeoutMs: 5_000, memoryLimitMb: 64 },
   security: { localOnly: true, redactionPatterns: [], auditLogEnabled: true, developerMode: false },
 };
@@ -94,6 +120,8 @@ export interface EnterprisePolicy {
   maxResponseBytes: number;
   /** Hosts (exact or `*.suffix`) that requests may never be sent to. */
   blockedHosts: string[];
+  /** If false, `network.hosts` overrides are ignored (requests always use real DNS). Default true. */
+  allowHostOverrides: boolean;
 }
 
 export const DEFAULT_POLICY: EnterprisePolicy = {
@@ -105,4 +133,5 @@ export const DEFAULT_POLICY: EnterprisePolicy = {
   allowSecretExport: true,
   maxResponseBytes: 1024 * 1024 * 1024,
   blockedHosts: [],
+  allowHostOverrides: true,
 };

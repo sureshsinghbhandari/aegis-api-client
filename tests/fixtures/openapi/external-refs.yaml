@@ -1,0 +1,51 @@
+openapi: 3.0.2
+info:
+  title: External references
+  version: "1"
+paths:
+  /things:
+    get:
+      operationId: listThings
+      parameters:
+        - $ref: "./common.yaml#/components/parameters/Page"
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: "https://schemas.example.com/thing.json"
+    post:
+      operationId: createThing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Thing"
+            examples:
+              remote:
+                externalValue: "https://example.com/examples/thing.json"
+      responses:
+        "201":
+          description: created
+  /secret:
+    get:
+      operationId: readSecret
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/__proto__"
+components:
+  schemas:
+    Thing:
+      type: object
+      properties:
+        id:
+          type: string
+        related:
+          $ref: "file:///etc/passwd"
+        dangling:
+          $ref: "#/components/schemas/DoesNotExist"

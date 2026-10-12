@@ -1,5 +1,5 @@
-import type { ScriptRunInput, ScriptRunResult } from '@aegis/core';
-import { redactText } from '@aegis/security';
+import { AUTH_SECRET_PARAMS, sanitizeHtmlForPreview, type ScriptAuthView, type ScriptRunInput, type ScriptRunResult } from '@aegis/core';
+import { isSensitiveKey, redactText } from '@aegis/security';
 import {
   newQuickJSWASMModule,
   type QuickJSContext,
@@ -58,6 +58,26 @@ function maxBracketDepth(source: string): number {
     }
   }
   return max;
+}
+
+const MASKED = '[REDACTED]';
+
+/**
+ * `pm.request.auth` view: credential parameters (by well-known key, by sensitive-looking key for
+ * custom auth, or by value when it is a known secret) are masked before the guest sees them.
+ */
+export function maskAuthView(auth: ScriptAuthView | undefined, secrets: readonly string[]): ScriptAuthView | undefined {
+  if (!auth || typeof auth !== 'object') return undefined;
+  const type = typeof auth.type === 'string' ? auth.type : 'none';
+  const known = AUTH_SECRET_PARAMS[type];
+  const params: ScriptAuthView['params'] = {};
+  for (const [key, value] of Object.entries(auth.params ?? {})) {
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue;
+    const secretKey = known ? known.includes(key) : isSensitiveKey(key);
+    const secretValue = typeof value === 'string' && value !== '' && secrets.includes(value);
+    Object.defineProperty(params, key, { value: secretKey || secretValue ? MASKED : value, enumerable: true, writable: true, configurable: true });
+  }
+  return { type, params };
 }
 
 function failureResult(input: ScriptRunInput, started: number, error: RunError): ScriptRunResult {
@@ -175,7 +195,7 @@ class SandboxRun {
     const ctx = runtime.newContext();
     this.ctx = ctx;
 
-    this.bridge = new HostBridge(ctx, this.input, this.abort, this.limits.maxSendRequests, {
+    this.bridge = new HostBridge(ctx, this.input, this.abort, this.limits.maxSendRequests, this.limits.maxStackSizeBytes, {
       onGuestException: (error) => this.onGuestException(error),
       onUncaught: (info) => {
         this.fatal ??= info;
@@ -203,6 +223,8 @@ class SandboxRun {
         response: this.input.phase === 'test' ? this.input.response : undefined,
         cookies: this.input.cookies,
         info: this.input.info,
+        auth: maskAuthView(this.input.auth, this.secrets),
+        features: { cookieJar: typeof this.input.host.cookieJar === 'function' },
       }),
     );
     try {
@@ -497,6 +519,10 @@ class SandboxRun {
     };
     if (error) result.error = error;
     if (snapshot?.nextRequest.called) result.nextRequest = snapshot.nextRequest.value;
+    if (snapshot?.visualizer !== undefined) {
+      // Defense in depth: scripts/handlers are stripped here AND the renderer wraps it with buildPreviewDocument (CSP + sandboxed iframe).
+      result.visualizer = sanitizeHtmlForPreview(redactText(snapshot.visualizer, this.secrets, []));
+    }
     return result;
   }
 

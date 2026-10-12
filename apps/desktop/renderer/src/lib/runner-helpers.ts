@@ -1,4 +1,4 @@
-import type { RunnerItemEvent } from '@aegis/core';
+import type { RunnerItemEvent, TreeNode } from '@aegis/core';
 
 /** One line in the exact live style: "✓ Login   200   182ms" / "✗ Update User  400  121ms". */
 export function formatRunnerRow(item: Pick<RunnerItemEvent, 'name' | 'passed' | 'statusCode' | 'durationMs'>): string {
@@ -77,6 +77,96 @@ export function resultsToJson(items: RunnerItemEvent[], meta: { runId?: string; 
   return JSON.stringify({ ...meta, summary: summarizeItems(items), results: items }, null, 2);
 }
 
+/** Escape for XML attribute and text content. */
+export function escapeXml(s: string): string {
+  return s.replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[c]!);
+}
+
+/** Escape for HTML text and attribute values (quotes included so it is safe inside attributes). */
+export function escapeHtml(s: string): string {
+  return s.replace(/[<>&"'`]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;', '`': '&#96;' })[c]!);
+}
+
+/** Control characters are not allowed in XML 1.0; strip them so CI parsers accept the file. */
+function xmlSafe(s: string): string {
+  return escapeXml(s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ''));
+}
+
+/**
+ * JUnit XML of a run: one `<testsuite>` per iteration, one `<testcase>` per test
+ * (a request without tests is one case; a transport error is a `<failure>`).
+ */
+export function resultsToJUnit(items: RunnerItemEvent[], suiteName: string): string {
+  const groups = groupByIteration(items);
+  const suites = groups.map((g) => {
+    const cases: string[] = [];
+    let failures = 0;
+    let skipped = 0;
+    for (const it of g.items) {
+      const cls = xmlSafe(`${suiteName}.${it.name}`);
+      if (it.tests.length === 0) {
+        if (it.error) failures++;
+        cases.push(`    <testcase classname="${cls}" name="${xmlSafe(`${it.method} ${it.url || it.name}`)}" time="${((it.durationMs ?? 0) / 1000).toFixed(3)}">${it.error ? `<failure message="${xmlSafe(it.error)}"/>` : ''}</testcase>`);
+        continue;
+      }
+      for (const t of it.tests) {
+        let inner = '';
+        if (t.skipped) {
+          skipped++;
+          inner = '<skipped/>';
+        } else if (!t.passed) {
+          failures++;
+          inner = `<failure message="${xmlSafe(t.error ?? 'failed')}"/>`;
+        }
+        cases.push(`    <testcase classname="${cls}" name="${xmlSafe(t.name)}" time="${(t.durationMs / 1000).toFixed(3)}">${inner}</testcase>`);
+      }
+      if (it.error && !it.tests.some((t) => !t.passed && !t.skipped)) {
+        failures++;
+        cases.push(`    <testcase classname="${cls}" name="${xmlSafe('request')}" time="0.000"><failure message="${xmlSafe(it.error)}"/></testcase>`);
+      }
+    }
+    const time = (g.items.reduce((n, i) => n + (i.durationMs ?? 0), 0) / 1000).toFixed(3);
+    return `  <testsuite name="${xmlSafe(groups.length > 1 ? `${suiteName} (iteration ${g.iteration + 1})` : suiteName)}" tests="${cases.length}" failures="${failures}" skipped="${skipped}" time="${time}">\n${cases.join('\n')}\n  </testsuite>`;
+  });
+  const total = suites.length ? items.reduce((n, i) => n + Math.max(1, i.tests.length), 0) : 0;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${xmlSafe(suiteName)}" tests="${total}">\n${suites.join('\n')}\n</testsuites>\n`;
+}
+
+/**
+ * Self-contained HTML report (no scripts, no external resources). Every value
+ * that comes from the run (names, URLs, errors, response bodies) is escaped.
+ */
+export function resultsToHtml(items: RunnerItemEvent[], meta: { label: string; status?: string; startedAt?: number }): string {
+  const s = summarizeItems(items);
+  const groups = groupByIteration(items);
+  const e = escapeHtml;
+  const rows = groups
+    .map((g) => {
+      const head = groups.length > 1 ? `<tr class="iter"><th colspan="6">Iteration ${g.iteration + 1}${g.failed ? ` · ${g.failed} failed` : ''}</th></tr>` : '';
+      const body = g.items
+        .map((it) => {
+          const tests = it.tests.map((t) => `<li class="${t.skipped ? 'skip' : t.passed ? 'pass' : 'fail'}">${t.skipped ? '○' : t.passed ? '✓' : '✗'} ${e(t.name)}${t.error ? `<div class="err">${e(t.error)}</div>` : ''}</li>`).join('');
+          const response = it.response
+            ? `<details><summary>Response ${it.response.status} ${e(it.response.statusText)} · ${e(it.response.contentType || 'no content type')} · ${it.response.size} bytes${it.response.bodyTruncated ? ' (truncated)' : ''}</summary><pre class="hdr">${it.response.headers.map((h) => `${e(h.name)}: ${e(h.value)}`).join('\n')}</pre><pre>${e(it.response.body)}</pre></details>`
+            : '';
+          return `<tr class="${it.passed ? 'pass' : 'fail'}"><td>${it.passed ? '✓' : '✗'}</td><td>${e(it.name)}</td><td><code>${e(it.method)}</code> ${e(it.url)}</td><td>${it.statusCode ?? 'ERR'}</td><td>${it.durationMs === null ? '—' : `${Math.round(it.durationMs)} ms`}</td><td>${it.error ? `<div class="err">${e(it.error)}</div>` : ''}${tests ? `<ul>${tests}</ul>` : ''}${response}</td></tr>`;
+        })
+        .join('');
+      return head + body;
+    })
+    .join('');
+  const when = meta.startedAt ? new Date(meta.startedAt).toISOString() : '';
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${e(meta.label)} - run report</title>
+<style>body{font:14px/1.4 system-ui,sans-serif;margin:24px;color:#222}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:6px 8px;vertical-align:top;text-align:left}tr.pass>td:first-child{color:#1a7f37}tr.fail>td:first-child{color:#c62828}tr.iter th{background:#f3f3f3}ul{margin:4px 0;padding-left:18px}li.fail{color:#c62828}li.skip{color:#777}.err{color:#c62828;white-space:pre-wrap}pre{background:#f7f7f7;padding:6px;overflow:auto;max-height:240px;white-space:pre-wrap;word-break:break-all}pre.hdr{color:#555}summary{cursor:pointer}.sum span{margin-right:16px}</style></head>
+<body><h1>${e(meta.label)}</h1>
+<p class="sum"><span>Status: <strong>${e(meta.status ?? 'completed')}</strong></span><span>Requests: ${s.requests}</span><span>Failed requests: ${s.failedRequests}</span><span>Tests passed: ${s.testsPassed}</span><span>Tests failed: ${s.testsFailed}</span><span>Duration: ${Math.round(s.durationMs)} ms</span>${when ? `<span>Started: ${e(when)}</span>` : ''}</p>
+<table><thead><tr><th></th><th>Request</th><th>URL</th><th>Status</th><th>Time</th><th>Tests / details</th></tr></thead><tbody>${rows}</tbody></table>
+<p>Generated by Aegis API Client. Stored responses are redacted: sensitive headers are removed and credential patterns masked.</p>
+</body></html>
+`;
+}
+
 // ----------------------------------------------------------------------------- data file preview
 
 export interface DataPreview {
@@ -144,6 +234,53 @@ export function previewDataFile(fileName: string, content: string, maxRows = 5):
   if (table.length < 2) return { error: 'The CSV needs a header row and at least one data row.' };
   const [headers, ...data] = table as [string[], ...string[][]];
   return { format: 'csv', headers, rows: data.slice(0, maxRows), rowCount: data.length };
+}
+
+// ----------------------------------------------------------------------------- request selection
+
+export interface RunnableNode {
+  id: string;
+  name: string;
+  method: string;
+  /** Folder path for display, e.g. "Users / Admin". */
+  path: string;
+}
+
+/** Requests of a collection (or one folder subtree) in depth-first tree order: the order the runner uses by default. */
+export function runnableRequestsInScope(tree: readonly TreeNode[], folderId: string | null): RunnableNode[] {
+  const byParent = new Map<string | null, TreeNode[]>();
+  for (const n of tree) byParent.set(n.parentId, [...(byParent.get(n.parentId) ?? []), n]);
+  for (const list of byParent.values()) list.sort((a, b) => a.sortOrder - b.sortOrder);
+  const out: RunnableNode[] = [];
+  const walk = (parent: string | null, path: string) => {
+    for (const n of byParent.get(parent) ?? []) {
+      if (n.kind === 'folder') walk(n.id, path ? `${path} / ${n.name}` : n.name);
+      else out.push({ id: n.id, name: n.name, method: n.method ?? 'GET', path });
+    }
+  };
+  walk(folderId, '');
+  return out;
+}
+
+/** Move `id` by `delta` positions (negative = up); unknown ids and out-of-range moves return the same array. */
+export function moveId(order: readonly string[], id: string, delta: number): string[] {
+  const from = order.indexOf(id);
+  const to = from + delta;
+  if (from === -1 || to < 0 || to >= order.length) return [...order];
+  const out = [...order];
+  out.splice(from, 1);
+  out.splice(to, 0, id);
+  return out;
+}
+
+/**
+ * The `requestIds` to send: `undefined` when the selection equals the default
+ * (every request, tree order), otherwise the selected ids in the chosen order.
+ */
+export function requestIdsForRun(order: readonly string[], selected: ReadonlySet<string>, defaultOrder: readonly string[]): string[] | undefined {
+  const chosen = order.filter((id) => selected.has(id));
+  if (chosen.length === defaultOrder.length && chosen.every((id, i) => id === defaultOrder[i])) return undefined;
+  return chosen;
 }
 
 /** Iterations that will actually run: capped by the number of data rows when a data file is used. */

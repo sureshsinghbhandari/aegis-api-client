@@ -1,7 +1,8 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import {
   AppError,
   type AegisApi,
+  type OAuth2DeviceInput,
   type SearchResult,
   type VariableEntry,
   type VariableOwner,
@@ -14,20 +15,26 @@ import {
   fetchPasswordToken,
   generatePkce,
   generateState,
+  pollDeviceTokenOnce,
   resolveEffectiveAuth,
+  startDeviceFlow,
   tokenToParams,
   type AuthContext,
 } from '@aegis/authentication';
 import { exportPostmanCollection, exportPostmanEnvironment } from '@aegis/postman';
-import { isSecretRef, secretRefKey } from '@aegis/security';
+import { assertSafeFilePath, isSecretRef, secretRefKey } from '@aegis/security';
 import { schema } from '@aegis/storage';
 import { VariableResolver, scopeFromEntries } from '@aegis/variables';
 import type { AppContext } from '../context';
 import type { RequestExecutor } from '../executor';
 import { PROXY_PASSWORD_KEY } from '../network';
+import { runFindReplace } from './find-replace';
 import { likeEscape, likeSql } from './util';
 
 type Handlers<N extends keyof AegisApi> = AegisApi[N];
+
+/** Upper bound for a PKCS#12 client certificate bundle (certificate chain + key). */
+const MAX_PFX_BYTES = 2 * 1024 * 1024;
 
 export function createCoreServices(ctx: AppContext, executor: RequestExecutor) {
   const repos = () => ctx.storage.repos;
@@ -110,6 +117,8 @@ export function createCoreServices(ctx: AppContext, executor: RequestExecutor) {
       }
       return out;
     },
+    // Preview or apply in one transaction; audited with counts only (see services/find-replace.ts).
+    findReplace: async (input) => runFindReplace(ctx, input),
   };
 
   const folders: Handlers<'folders'> = {
@@ -117,6 +126,8 @@ export function createCoreServices(ctx: AppContext, executor: RequestExecutor) {
     create: async ({ collectionId, parentFolderId, name }) => repos().collections.createFolder(collectionId, parentFolderId, { name: name.trim() }),
     update: async ({ id, ...patch }) => repos().collections.updateFolder(id, patch),
     delete: async ({ id }) => repos().collections.deleteFolder(id),
+    // Deep copy (sub-folders, requests, scripts, variables, examples); auth secrets are re-vaulted under the new owner ids.
+    duplicate: async ({ id }) => repos().collections.requireFolder(ctx.storage.transaction((r) => r.collections.duplicateFolder(id))),
   };
 
   const requests: Handlers<'requests'> = {
@@ -125,7 +136,13 @@ export function createCoreServices(ctx: AppContext, executor: RequestExecutor) {
     save: async ({ id, draft }) => repos().collections.updateRequest(id, draft),
     delete: async ({ id }) => repos().collections.deleteRequest(id),
     duplicate: async ({ id }) => repos().collections.duplicateRequest(id),
-    move: async ({ kind, id, parentFolderId, index }) => ctx.storage.transaction((r) => r.collections.move(kind, id, parentFolderId, index)),
+    /**
+     * Reorder / re-parent inside a collection, or (with `collectionId`) move into another collection.
+     * Cross-collection moves re-vault nothing: auth and variables are keyed by request/folder id. What
+     * changes is the inherited context (collection auth, scripts and variables of the new collection).
+     */
+    move: async ({ kind, id, parentFolderId, index, collectionId }) =>
+      ctx.storage.transaction((r) => (collectionId ? r.collections.moveToCollection(kind, id, collectionId, parentFolderId, index) : r.collections.move(kind, id, parentFolderId, index))),
     effectiveAuth: async ({ id }) => {
       const req = repos().collections.requireRequest(id);
       const chain = repos().collections.getFolderChain(req.folderId, 'refs');
@@ -186,23 +203,56 @@ export function createCoreServices(ctx: AppContext, executor: RequestExecutor) {
       ctx.cookies.invalidate(workspaceId);
       return n;
     },
+    // Manual add/edit from the cookie manager. Attributes are validated in the repository; the value goes to the vault.
+    add: async (input) => {
+      repos().workspaces.require(input.workspaceId);
+      const c = repos().cookies.add(input);
+      ctx.cookies.invalidate(input.workspaceId);
+      return c;
+    },
+    update: async ({ id, ...patch }) => {
+      const c = repos().cookies.update(id, patch);
+      ctx.cookies.invalidate(c.workspaceId);
+      return c;
+    },
   };
 
   const certificates: Handlers<'certificates'> = {
     list: async () => repos().certificates.list().map(({ certPem: _p, ...rest }) => rest),
-    add: async ({ kind, name, hostPattern, certPem, keyPem, passphrase }) => {
+    add: async ({ kind, name, hostPattern, certPem, keyPem, passphrase, pfxBase64, pfxPath }) => {
       if (certPem && !/-----BEGIN [A-Z ]*CERTIFICATE-----/.test(certPem)) throw new AppError('VALIDATION_FAILED', 'The certificate must be PEM encoded.');
       if (keyPem && !/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(keyPem)) throw new AppError('VALIDATION_FAILED', 'The private key must be PEM encoded.');
-      if (kind === 'client' && (!certPem || !keyPem)) throw new AppError('VALIDATION_FAILED', 'A client certificate needs both a certificate and a private key.');
+      // PKCS#12 (PFX) client certificates: given inline (base64) or as a local file read here (never by the renderer).
+      let pfx: string | undefined;
+      if (kind === 'client' && (pfxBase64 || pfxPath)) {
+        if (certPem || keyPem) throw new AppError('VALIDATION_FAILED', 'Provide either a PEM certificate + key or a PKCS#12 (PFX) bundle, not both.');
+        let bytes: Buffer;
+        if (pfxPath) {
+          const safe = assertSafeFilePath(pfxPath);
+          const info = await stat(safe).catch(() => undefined);
+          if (!info?.isFile()) throw new AppError('VALIDATION_FAILED', 'The PFX file could not be read.');
+          if (info.size > MAX_PFX_BYTES) throw new AppError('VALIDATION_FAILED', 'The file is too large to be a PKCS#12 bundle.');
+          bytes = await readFile(safe);
+        } else {
+          bytes = Buffer.from(pfxBase64!, 'base64');
+          if (bytes.length === 0 || bytes.length > MAX_PFX_BYTES) throw new AppError('VALIDATION_FAILED', 'The PFX data is empty, not base64, or too large.');
+        }
+        // A PKCS#12 bundle is a DER SEQUENCE (0x30 ...); reject PEM/text pasted by mistake.
+        if (bytes[0] !== 0x30) throw new AppError('VALIDATION_FAILED', 'The file does not look like a PKCS#12 (.pfx / .p12) bundle.');
+        pfx = bytes.toString('base64');
+      }
+      if (kind === 'client' && !pfx && (!certPem || !keyPem)) throw new AppError('VALIDATION_FAILED', 'A client certificate needs a certificate and a private key (PEM), or a PKCS#12 bundle.');
+      if (kind === 'ca' && !certPem) throw new AppError('VALIDATION_FAILED', 'A CA certificate must be PEM encoded.');
       const created = repos().certificates.add({
         kind,
         name,
         ...(hostPattern ? { hostPattern } : {}),
         ...(certPem ? { certPem } : {}),
         ...(keyPem ? { keyPem } : {}),
+        ...(pfx ? { pfxBase64: pfx } : {}),
         ...(passphrase ? { passphrase } : {}),
       });
-      audit.log('CHANGE_SECURITY_SETTING', { setting: 'certificates', action: 'add', kind, name });
+      audit.log('CHANGE_SECURITY_SETTING', { setting: 'certificates', action: 'add', kind, name, format: pfx ? 'pkcs12' : 'pem' });
       const { certPem: _c, ...view } = created;
       return view;
     },
@@ -263,42 +313,96 @@ export function createCoreServices(ctx: AppContext, executor: RequestExecutor) {
         title: purpose === 'upload' ? 'Select file' : 'Select data file',
         filters: purpose === 'upload' ? [{ name: 'All files', extensions: ['*'] }] : [{ name: 'CSV or JSON', extensions: ['csv', 'json'] }],
       }),
-    oauth2GetToken: async ({ auth, environmentId, workspaceId }) => {
+    oauth2GetToken: async ({ auth, environmentId, workspaceId, requestId, collectionId, folderId, cancelId }) => {
       const r = repos();
       const env = environmentId !== undefined ? environmentId : (r.environments.getActive(workspaceId)?.id ?? null);
+      // Same scope chain as the executor: environment > folders (innermost first) > collection > globals,
+      // so `{{clientId}}` defined on the collection or a folder resolves exactly like at send time.
+      const stored = requestId ? r.collections.requireRequest(requestId, 'refs') : undefined;
+      const effectiveCollectionId = stored?.collectionId ?? collectionId;
+      const effectiveFolderId = stored ? stored.folderId : (folderId ?? null);
+      const folderChain = effectiveCollectionId ? r.collections.getFolderChain(effectiveFolderId, 'refs') : [];
       const resolver = new VariableResolver({
         environment: scopeFromEntries(env ? r.environments.variables(env, 'resolve') : []),
+        folders: folderChain.map((f) => scopeFromEntries(r.vars.folder.list(f.id, 'resolve'))),
+        collection: scopeFromEntries(effectiveCollectionId ? r.vars.collection.list(effectiveCollectionId, 'resolve') : []),
         global: scopeFromEntries(r.vars.global.list(workspaceId, 'resolve')),
       });
       const opened = r.vault.openAuth(auth, 'resolve');
       const params = Object.fromEntries(Object.entries(opened.params).map(([k, v]) => [k, typeof v === 'string' ? resolver.resolveString(v) : v]));
       const grant = String(params.grant_type ?? 'authorization_code');
-      const ac = new AbortController();
+      // Cancellable through `execution.cancel({ executionId: cancelId })`.
+      const flowId = cancelId ?? `oauth:${Date.now()}`;
+      const ac = executor.track(flowId);
       const authCtx: AuthContext = {
         method: 'POST',
         url: String(params.accessTokenUrl ?? ''),
         headers: [],
         body: { kind: 'none' },
         now: () => ctx.now(),
-        send: (req) => executor.sendTokenRequest(req, `oauth:${Date.now()}`, ac.signal),
+        send: (req) => executor.sendTokenRequest(req, flowId, ac.signal),
       };
-      let token;
-      if (grant === 'client_credentials') token = await fetchClientCredentialsToken(params, authCtx);
-      else if (grant === 'password_credentials') token = await fetchPasswordToken(params, authCtx);
-      else {
-        const usePkce = grant === 'authorization_code_with_pkce';
-        const pkce = usePkce ? generatePkce(params.challengeAlgorithm === 'plain' ? 'plain' : 'S256') : undefined;
-        const state = generateState();
-        const url = buildAuthorizationUrl(params, pkce, state);
-        const redirectUri = String(params.redirect_uri ?? '');
-        if (!redirectUri) throw new AppError('VALIDATION_FAILED', 'A callback URL is required for the authorization code flow.');
-        const granted = await platform.authorize({ authUrl: url, redirectUri });
-        if (granted.state !== state) throw new AppError('AUTH_FAILED', 'The authorization response had an unexpected state value (possible CSRF). Try again.');
-        token = await exchangeAuthorizationCode(params, authCtx, granted.code, pkce);
+      const cancelled = new Promise<never>((_, reject) => ac.signal.addEventListener('abort', () => reject(ac.signal.reason instanceof Error ? ac.signal.reason : new AppError('REQUEST_CANCELLED', 'The token request was cancelled.')), { once: true }));
+      try {
+        let token;
+        if (grant === 'client_credentials') token = await Promise.race([fetchClientCredentialsToken(params, authCtx), cancelled]);
+        else if (grant === 'password_credentials') token = await Promise.race([fetchPasswordToken(params, authCtx), cancelled]);
+        else {
+          const usePkce = grant === 'authorization_code_with_pkce';
+          const pkce = usePkce ? generatePkce(params.challengeAlgorithm === 'plain' ? 'plain' : 'S256') : undefined;
+          const state = generateState();
+          const url = buildAuthorizationUrl(params, pkce, state);
+          const redirectUri = String(params.redirect_uri ?? '');
+          if (!redirectUri) throw new AppError('VALIDATION_FAILED', 'A callback URL is required for the authorization code flow.');
+          const granted = await Promise.race([platform.authorize({ authUrl: url, redirectUri }), cancelled]);
+          if (granted.state !== state) throw new AppError('AUTH_FAILED', 'The authorization response had an unexpected state value (possible CSRF). Try again.');
+          token = await Promise.race([exchangeAuthorizationCode(params, authCtx, granted.code, pkce), cancelled]);
+        }
+        return { params: tokenToParams(token) };
+      } finally {
+        executor.untrack(flowId);
       }
-      return { params: tokenToParams(token) };
+    },
+    // OAuth 2.0 device authorization grant (RFC 8628). Stateless on purpose: the renderer keeps the
+    // device code in memory, polls with the returned interval and cancels by not polling again.
+    oauth2DeviceStart: async (input) => {
+      const { params, authCtx } = deviceFlowSetup(input);
+      return startDeviceFlow(params, authCtx);
+    },
+    oauth2DevicePoll: async (input) => {
+      const { params, authCtx } = deviceFlowSetup(input);
+      const outcome = await pollDeviceTokenOnce(params, authCtx, input.deviceCode, input.interval);
+      return outcome.status === 'done' ? { status: 'done', params: tokenToParams(outcome.token) } : outcome;
     },
   };
+
+  /** Resolve `{{variables}}` of an auth config with the executor's scope chain and build a token-endpoint context (policy host check included). */
+  function deviceFlowSetup({ auth, environmentId, workspaceId, requestId, collectionId, folderId }: OAuth2DeviceInput): { params: Record<string, string | number | boolean>; authCtx: AuthContext } {
+    const r = repos();
+    const env = environmentId !== undefined ? environmentId : (r.environments.getActive(workspaceId)?.id ?? null);
+    const stored = requestId ? r.collections.requireRequest(requestId, 'refs') : undefined;
+    const effectiveCollectionId = stored?.collectionId ?? collectionId;
+    const effectiveFolderId = stored ? stored.folderId : (folderId ?? null);
+    const folderChain = effectiveCollectionId ? r.collections.getFolderChain(effectiveFolderId, 'refs') : [];
+    const resolver = new VariableResolver({
+      environment: scopeFromEntries(env ? r.environments.variables(env, 'resolve') : []),
+      folders: folderChain.map((f) => scopeFromEntries(r.vars.folder.list(f.id, 'resolve'))),
+      collection: scopeFromEntries(effectiveCollectionId ? r.vars.collection.list(effectiveCollectionId, 'resolve') : []),
+      global: scopeFromEntries(r.vars.global.list(workspaceId, 'resolve')),
+    });
+    const opened = r.vault.openAuth(auth, 'resolve');
+    const params = Object.fromEntries(Object.entries(opened.params).map(([k, v]) => [k, typeof v === 'string' ? resolver.resolveString(v) : v]));
+    const ac = new AbortController();
+    const authCtx: AuthContext = {
+      method: 'POST',
+      url: String(params.accessTokenUrl ?? ''),
+      headers: [],
+      body: { kind: 'none' },
+      now: () => ctx.now(),
+      send: (req) => executor.sendTokenRequest(req, `oauth-device:${Date.now()}`, ac.signal),
+    };
+    return { params, authCtx };
+  }
 
   return { workspaces, collections, folders, requests, environments, variables, cookies, certificates, settings, audit: audits, tools };
 }

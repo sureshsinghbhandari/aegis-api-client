@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { CodeEditor } from '../components/CodeEditor';
 import { Button, ErrorBanner, formatBytes, Spinner } from '../components/ui';
 import { monacoLanguage, prettyPrint } from '../lib/format';
+import { applyJsonPathToText, formatJsonPathResults } from '../lib/jsonpath';
 import { LargeBodyViewer } from './LargeBodyViewer';
 import { copyText, type ResponseBody } from './useResponseBody';
 
@@ -44,17 +45,51 @@ function Loading({ body }: { body: ResponseBody }) {
   );
 }
 
+/** JSONPath filter box shown above JSON bodies (`$.items[*].id`). */
+function JsonPathFilter({ value, onChange, error, count }: { value: string; onChange(v: string): void; error: string | null; count: number | null }) {
+  return (
+    <div className="rv-filter">
+      <input
+        type="search"
+        className="mono"
+        aria-label="Filter JSON with JSONPath"
+        placeholder="Filter with JSONPath, e.g. $.data[*].id or $..name or $.items[?(@.price > 10)]"
+        value={value}
+        spellCheck={false}
+        onChange={(e) => onChange(e.target.value)}
+        aria-invalid={error !== null}
+      />
+      {error ? (
+        <span className="rv-filter-error" role="alert">
+          {error}
+        </span>
+      ) : count !== null ? (
+        <span className="wb-dim">
+          {count} result{count === 1 ? '' : 's'}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export function PrettyView({ response, body, onSave }: { response: ResponseView; body: ResponseBody; onSave(): void }) {
   const [wrap, setWrap] = useState(true);
+  const [filter, setFilter] = useState('');
   const pretty = useMemo(() => (body.text === null ? null : prettyPrint(body.kind, body.text)), [body.kind, body.text]);
+  const filtered = useMemo(() => {
+    if (body.kind !== 'json' || body.text === null || filter.trim() === '') return null;
+    const outcome = applyJsonPathToText(body.text, filter);
+    return outcome.ok ? { text: formatJsonPathResults(outcome), count: outcome.results.length, error: null } : { text: null, count: null, error: outcome.error };
+  }, [body.kind, body.text, filter]);
 
   if (body.large) return <LargeBodyViewer responseId={response.responseId} size={response.size} onSave={onSave} />;
   if (body.kind === 'image' || body.kind === 'pdf' || body.kind === 'binary') return <BinaryNotice response={response} onSave={onSave} />;
   if (pretty === null) return <Loading body={body} />;
   if (pretty === '') return <div className="empty">The response body is empty.</div>;
+  const shown = filtered?.text ?? pretty;
   return (
     <div className="rv-body">
-      <BodyToolbar text={pretty} label="Body">
+      <BodyToolbar text={shown} label="Body">
         <span className="wb-dim">{body.kind.toUpperCase()}</span>
         <label className="checkbox">
           <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
@@ -62,8 +97,9 @@ export function PrettyView({ response, body, onSave }: { response: ResponseView;
         </label>
         <span className="wb-dim">Ctrl+F to search, click the gutter arrows to fold</span>
       </BodyToolbar>
+      {body.kind === 'json' && <JsonPathFilter value={filter} onChange={setFilter} error={filtered?.error ?? null} count={filtered?.count ?? null} />}
       <div className="rv-editor">
-        <CodeEditor value={pretty} language={monacoLanguage(body.kind)} readOnly wordWrap={wrap} />
+        <CodeEditor value={shown} language={monacoLanguage(body.kind)} readOnly wordWrap={wrap} />
       </div>
     </div>
   );

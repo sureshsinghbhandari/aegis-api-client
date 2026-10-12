@@ -1,4 +1,30 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { AppError, DEFAULT_POLICY, type AppSettings, type EnterprisePolicy } from '@aegis/core';
+
+/** Read a policy file if it exists; `null` when it does not. Errors propagate (handled by the caller). */
+function readPolicyFile(file: string): string | null {
+  return existsSync(file) ? readFileSync(file, 'utf8') : null;
+}
+
+/**
+ * Load the first readable policy file among `candidates` (undefined entries are skipped). A missing
+ * file falls through to the next candidate; a broken file (unreadable or invalid JSON) also falls
+ * through, because a corrupt policy must never silently weaken policy: the defaults are restrictive.
+ * Returns the defaults when no candidate applies. Shared by the desktop main process and the CLI.
+ */
+export function loadPolicyFromFiles(candidates: ReadonlyArray<string | undefined>, read: (file: string) => string | null = readPolicyFile): { policy: PolicyService; file: string | null } {
+  for (const file of candidates) {
+    if (!file) continue;
+    try {
+      const text = read(file);
+      if (text === null) continue;
+      return { policy: new PolicyService(parsePolicy(JSON.parse(text))), file };
+    } catch {
+      /* fall through to the next candidate / defaults */
+    }
+  }
+  return { policy: new PolicyService(DEFAULT_POLICY), file: null };
+}
 
 /** Merge an untrusted policy document over the defaults, keeping only known, correctly typed keys. */
 export function parsePolicy(raw: unknown): EnterprisePolicy {

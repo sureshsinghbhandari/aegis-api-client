@@ -1,8 +1,28 @@
-import type { ConsoleEntry, HeaderPair, ScriptCookie, ScriptRunInput, ScriptSendRequest, ScriptSendResponse } from '@aegis/core';
-import { redactText } from '@aegis/security';
+import type {
+  ConsoleEntry,
+  HeaderPair,
+  ScriptCookie,
+  ScriptCookieInput,
+  ScriptCookieJarOp,
+  ScriptCookieJarResult,
+  ScriptRunInput,
+  ScriptSendRequest,
+  ScriptSendResponse,
+} from '@aegis/core';
+import { redactText, redactUrl } from '@aegis/security';
 import { createDefaultDynamicRegistry } from '@aegis/variables';
+import { randomBytes } from 'node:crypto';
 import type { QuickJSContext, QuickJSDeferredPromise, QuickJSHandle } from 'quickjs-emscripten';
-import { MAX_CONSOLE_ENTRIES, MAX_CONSOLE_MESSAGE_CHARS, MAX_PENDING_TIMERS } from './limits';
+import { SANDBOX_LIBS } from './generated/libs-bundle';
+import {
+  MAX_CONSOLE_ENTRIES,
+  MAX_CONSOLE_MESSAGE_CHARS,
+  MAX_COOKIE_OPS,
+  MAX_PENDING_TIMERS,
+  MAX_RANDOM_BYTES_PER_CALL,
+  MAX_RANDOM_CALLS,
+  MAX_STACK_BYTES,
+} from './limits';
 
 const dynamicRegistry = createDefaultDynamicRegistry();
 const LEVELS = new Set<ConsoleEntry['level']>(['log', 'info', 'warn', 'error', 'debug']);
@@ -10,6 +30,9 @@ const LEVELS = new Set<ConsoleEntry['level']>(['log', 'info', 'warn', 'error', '
 const PRE_REDACTION_CHARS = 64 * 1024;
 const TRUNCATION_SUFFIX = '... [truncated]';
 const MAX_ERROR_MESSAGE_CHARS = 2048;
+const MAX_COOKIE_URL_CHARS = 8192;
+const MAX_COOKIE_NAME_CHARS = 4096;
+const MAX_COOKIE_VALUE_CHARS = 64 * 1024;
 
 export interface GuestErrorInfo {
   name: string;
@@ -77,8 +100,67 @@ export function parseSendRequest(json: string): ScriptSendRequest {
   return request;
 }
 
+function boundedString(v: unknown, what: string, max: number): string {
+  if (typeof v !== 'string') throw new Error(`Invalid cookie jar operation: "${what}" must be a string`);
+  if (v.length > max) throw new Error(`Invalid cookie jar operation: "${what}" is too long (limit ${max} characters)`);
+  return v;
+}
+
+function parseCookieInput(v: unknown): ScriptCookieInput {
+  if (!isRecord(v)) throw new Error('Invalid cookie jar operation: "cookie" must be an object');
+  const cookie: ScriptCookieInput = {
+    name: boundedString(v.name, 'cookie.name', MAX_COOKIE_NAME_CHARS),
+    value: boundedString(v.value, 'cookie.value', MAX_COOKIE_VALUE_CHARS),
+  };
+  if (cookie.name === '') throw new Error('Invalid cookie jar operation: cookie name is required');
+  if (v.httpOnly === true) throw new Error('Scripts cannot set httpOnly cookies');
+  if (v.domain !== undefined) cookie.domain = boundedString(v.domain, 'cookie.domain', MAX_COOKIE_NAME_CHARS);
+  if (v.path !== undefined) cookie.path = boundedString(v.path, 'cookie.path', MAX_COOKIE_NAME_CHARS);
+  if (v.expires !== undefined) cookie.expires = boundedString(v.expires, 'cookie.expires', 64);
+  if (v.sameSite !== undefined) cookie.sameSite = boundedString(v.sameSite, 'cookie.sameSite', 16);
+  if (v.maxAge !== undefined) {
+    if (typeof v.maxAge !== 'number' || !Number.isFinite(v.maxAge)) throw new Error('Invalid cookie jar operation: "cookie.maxAge" must be a number');
+    cookie.maxAge = v.maxAge;
+  }
+  if (v.secure !== undefined) cookie.secure = v.secure === true;
+  return cookie;
+}
+
+/** Validate the (untrusted) cookie-jar operation produced by the guest. */
+export function parseCookieJarOp(json: string): ScriptCookieJarOp {
+  const raw: unknown = JSON.parse(json);
+  if (!isRecord(raw)) throw new Error('Invalid cookie jar operation');
+  const url = boundedString(raw.url, 'url', MAX_COOKIE_URL_CHARS);
+  if (url === '') throw new Error('Invalid cookie jar operation: "url" is required');
+  switch (raw.op) {
+    case 'get':
+      return { op: 'get', url, name: boundedString(raw.name, 'name', MAX_COOKIE_NAME_CHARS) };
+    case 'getAll':
+      return { op: 'getAll', url };
+    case 'set':
+      return { op: 'set', url, cookie: parseCookieInput(raw.cookie) };
+    case 'unset':
+      return { op: 'unset', url, name: boundedString(raw.name, 'name', MAX_COOKIE_NAME_CHARS) };
+    case 'clear':
+      return { op: 'clear', url };
+    default:
+      throw new Error('Invalid cookie jar operation');
+  }
+}
+
 function sanitizeCookies(cookies: readonly ScriptCookie[] | undefined): ScriptCookie[] {
-  return (cookies ?? []).map((c) => ({ ...c }));
+  return (cookies ?? [])
+    .filter((c) => isRecord(c) && c.httpOnly !== true)
+    .map((c) => ({
+      name: String(c.name),
+      value: String(c.value),
+      domain: String(c.domain ?? ''),
+      path: String(c.path ?? '/'),
+      ...(typeof c.expires === 'string' ? { expires: c.expires } : {}),
+      secure: c.secure === true,
+      httpOnly: false,
+      ...(typeof c.sameSite === 'string' ? { sameSite: c.sameSite } : {}),
+    }));
 }
 
 function sanitizeResponse(res: ScriptSendResponse): ScriptSendResponse {
@@ -104,6 +186,8 @@ export class HostBridge {
   private finished = false;
   private disposed = false;
   private requestCount = 0;
+  private cookieOpCount = 0;
+  private randomCalls = 0;
   private nextTimerId = 0;
   private consoleTruncated = false;
   private readonly timers = new Map<number, TimerEntry>();
@@ -115,6 +199,7 @@ export class HostBridge {
     private readonly input: ScriptRunInput,
     private readonly abort: AbortController,
     private readonly maxSendRequests: number,
+    private readonly maxStackSizeBytes: number,
     private readonly callbacks: BridgeCallbacks,
   ) {
     this.secrets = (input.secretValues ?? []).filter((s) => s.length > 0);
@@ -199,6 +284,40 @@ export class HostBridge {
     });
 
     define('sendRequest', (jsonH) => this.sendRequest(jsonH ? this.readString(jsonH, 8 * 1024 * 1024) : undefined));
+    define('cookieJar', (jsonH) => this.cookieJar(jsonH ? this.readString(jsonH, 256 * 1024) : undefined));
+
+    // Library loader: evaluates a committed, esbuild-generated bundle (see scripts/build-sandbox-libs.mjs) at
+    // global scope and returns its factory function. The bundle never sees `host`; the prelude calls the
+    // factory with a minimal `crypto.getRandomValues` shim. Only names from the generated allow-list load.
+    define('requireLib', (nameH) => {
+      const name = nameH ? this.readString(nameH, 64) : undefined;
+      const source = name !== undefined && Object.hasOwn(SANDBOX_LIBS, name) ? SANDBOX_LIBS[name] : undefined;
+      if (source === undefined) throw new Error(`Unknown sandbox library "${String(name)}"`);
+      // QuickJS parses recursively; the minified bundles need more stack than the deliberately small
+      // default. Use the clamped maximum (still safe for the host stack) only while the bundle is evaluated.
+      ctx.runtime.setMaxStackSize(MAX_STACK_BYTES);
+      let result: ReturnType<QuickJSContext['evalCode']>;
+      try {
+        result = ctx.evalCode(source, `aegis-lib-${name}.js`);
+      } finally {
+        ctx.runtime.setMaxStackSize(this.maxStackSizeBytes);
+      }
+      if (result.error) {
+        const detail = ctx.dump(result.error) as { message?: string } | undefined;
+        result.error.dispose();
+        throw new Error(`The "${name}" library could not be loaded: ${detail?.message ?? 'unknown error'}`);
+      }
+      return result.value;
+    });
+
+    define('randomBytes', (nH) => {
+      const requested = nH && ctx.typeof(nH) === 'number' ? ctx.getNumber(nH) : NaN;
+      if (!Number.isInteger(requested) || requested < 0 || requested > MAX_RANDOM_BYTES_PER_CALL) {
+        throw new RangeError(`randomBytes: length must be an integer between 0 and ${MAX_RANDOM_BYTES_PER_CALL}`);
+      }
+      if (++this.randomCalls > MAX_RANDOM_CALLS) throw new Error(`Random number generation limit exceeded (max ${MAX_RANDOM_CALLS} calls per script)`);
+      return ctx.newString(randomBytes(requested).toString('hex'));
+    });
     return host;
   }
 
@@ -263,6 +382,10 @@ export class HostBridge {
     }
     this.requestCount++;
     this.pendingOps++;
+    // Network trace in the console (like Postman's console), with sensitive query parameters masked.
+    const label = `${request.method} ${redactUrl(request.url)}`;
+    const started = Date.now();
+    this.addConsole('info', `-> ${label}`);
     let pending: Promise<ScriptSendResponse>;
     try {
       pending = Promise.resolve(this.input.host.sendRequest(request, this.abort.signal));
@@ -272,18 +395,67 @@ export class HostBridge {
     void pending.then(
       (res) => {
         this.pendingOps--;
-        this.settle(deferred, { ok: true, response: sanitizeResponse(res) });
+        const response = sanitizeResponse(res);
+        this.addConsole('info', `<- ${response.code} ${response.status} ${label} (${response.responseTimeMs || Date.now() - started} ms, ${response.responseSizeBytes} B)`);
+        this.settle(deferred, { ok: true, response });
       },
       (err: unknown) => {
         this.pendingOps--;
         const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Request failed';
+        const error = this.redact(raw).slice(0, MAX_ERROR_MESSAGE_CHARS);
+        this.addConsole('error', `<- ${label} failed after ${Date.now() - started} ms: ${error}`);
+        this.settle(deferred, { ok: false, error });
+      },
+    );
+    return deferred.handle;
+  }
+
+  private cookieJar(json: string | undefined): QuickJSHandle {
+    const deferred = this.ctx.newPromise();
+    this.deferreds.push(deferred);
+    let op: ScriptCookieJarOp;
+    try {
+      if (json === undefined) throw new Error('Invalid cookie jar operation');
+      op = parseCookieJarOp(json);
+    } catch (e) {
+      this.settle(deferred, { ok: false, error: e instanceof Error ? e.message : 'Invalid cookie jar operation' });
+      return deferred.handle;
+    }
+    const jar = this.input.host.cookieJar;
+    if (typeof jar !== 'function') {
+      this.settle(deferred, { ok: false, error: 'The cookie jar is not available in this context' });
+      return deferred.handle;
+    }
+    if (this.cookieOpCount >= MAX_COOKIE_OPS) {
+      this.settle(deferred, { ok: false, error: `pm.cookies.jar() limit exceeded (max ${MAX_COOKIE_OPS} operations per script)` });
+      return deferred.handle;
+    }
+    this.cookieOpCount++;
+    this.pendingOps++;
+    let pending: Promise<ScriptCookieJarResult>;
+    try {
+      pending = Promise.resolve(jar.call(this.input.host, op, this.abort.signal));
+    } catch (e) {
+      pending = Promise.reject(e);
+    }
+    void pending.then(
+      (res) => {
+        this.pendingOps--;
+        this.settle(deferred, { ok: true, result: { cookies: sanitizeCookies(isRecord(res) ? (res.cookies as ScriptCookie[] | undefined) : undefined) } });
+      },
+      (err: unknown) => {
+        this.pendingOps--;
+        const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Cookie jar operation failed';
         this.settle(deferred, { ok: false, error: this.redact(raw).slice(0, MAX_ERROR_MESSAGE_CHARS) });
       },
     );
     return deferred.handle;
   }
 
-  private settle(deferred: QuickJSDeferredPromise, envelope: { ok: true; response: ScriptSendResponse } | { ok: false; error: string }): void {
+  private settle(
+    deferred: QuickJSDeferredPromise,
+    envelope: { ok: true; response: ScriptSendResponse } | { ok: true; result: ScriptCookieJarResult } | { ok: false; error: string },
+  ): void {
     if (this.finished || !deferred.alive) return;
     try {
       const value = this.ctx.newString(JSON.stringify(envelope));

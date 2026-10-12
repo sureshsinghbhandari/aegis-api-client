@@ -1,0 +1,113 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Petstore 3.1
+  version: 2.0.0
+  summary: OpenAPI 3.1 flavour of the pet store
+  description: |
+    Uses 3.1-only features: type arrays with null, `examples` arrays on schemas,
+    webhooks and a path item reference.
+servers:
+  - url: https://api.petstore.example/v2
+security:
+  - bearer: []
+tags:
+  - name: pets
+paths:
+  /pets:
+    get:
+      tags: [pets]
+      summary: List pets
+      operationId: listPets
+      parameters:
+        - name: limit
+          in: query
+          required: true
+          schema:
+            type: integer
+            examples: [20]
+        - name: tag
+          in: query
+          schema:
+            type: [string, "null"]
+      responses:
+        "200":
+          description: A paged array of pets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Pet"
+    post:
+      tags: [pets]
+      summary: Create a pet
+      operationId: createPet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Pet"
+      responses:
+        "201":
+          description: Created
+  /pets/{petId}:
+    $ref: "#/components/pathItems/PetById"
+webhooks:
+  newPet:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Pet"
+      responses:
+        "200":
+          description: ok
+components:
+  pathItems:
+    PetById:
+      get:
+        tags: [pets]
+        summary: Get a pet
+        operationId: getPet
+        parameters:
+          - name: petId
+            in: path
+            required: true
+            schema:
+              type: string
+              examples: ["p-1"]
+        responses:
+          "200":
+            description: ok
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/Pet"
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Pet:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          examples: [1]
+        name:
+          type: string
+          examples: [Fluffy]
+        nickname:
+          type: [string, "null"]
+        tags:
+          type: array
+          items:
+            type: string
+          examples: [[cute, small]]
+        parent:
+          $ref: "#/components/schemas/Pet"

@@ -93,7 +93,10 @@ describe('pm.variables / scopes', () => {
           merged, hasEnvAfterUnset: pm.variables.has('envOnly'), hasL: pm.variables.has('l'), name: pm.environment.name,
         }));
         `,
-        { variables: { environment: { envOnly: 'e', shared: 'env' }, globals: { g: 'g' } } },
+        {
+          variables: { environment: { envOnly: 'e', shared: 'env' }, globals: { g: 'g' } },
+          info: { eventName: 'prerequest', iteration: 0, iterationCount: 1, requestName: 'Get user', requestId: 'req-1', environmentName: 'Staging' },
+        },
       ),
     );
     expectOk(r);
@@ -101,9 +104,23 @@ describe('pm.variables / scopes', () => {
       merged: { g: 'g', envOnly: 'e', shared: 'local', l: '1' },
       hasEnvAfterUnset: true,
       hasL: false,
-      name: 'environment',
+      name: 'Staging',
     });
     expect(r.variables.environment.envOnly).toBe('e');
+  });
+
+  it('pm.environment.name is the active environment name, or undefined without one', async () => {
+    const none = await run(makeInput(`pm.variables.set('t', typeof pm.environment.name);`));
+    expectOk(none);
+    expect(none.variables.variables.t).toBe('undefined');
+    const named = await run(
+      makeInput(`pm.variables.set('n', pm.environment.name); pm.environment.name = 'x'; pm.variables.set('after', pm.environment.name);`, {
+        info: { eventName: 'prerequest', iteration: 0, iterationCount: 1, requestName: 'r', requestId: 'id', environmentName: 'Prod (EU)' },
+      }),
+    );
+    expectOk(named);
+    expect(named.variables.variables.n).toBe('Prod (EU)');
+    expect(named.variables.variables.after).toBe('Prod (EU)'); // read-only
   });
 
   it('replaceIn uses precedence, resolves nested references and leaves unknown variables untouched', async () => {
@@ -441,7 +458,7 @@ describe('pm.response', () => {
     expect(testByName(bad, 'x').passed).toBe(false);
   });
 
-  it('jsonSchema supports a documented subset and rejects unsupported keywords clearly', async () => {
+  it('jsonSchema validates with the bundled ajv (draft-07) and reports violations clearly', async () => {
     const r = await run(
       testPhase(`
         const schema = { type: 'object', required: ['id', 'name'], properties: { id: { type: 'integer' }, name: { type: 'string', minLength: 1 }, tags: { type: 'array', items: { type: 'string' }, maxItems: 5 } } };
@@ -450,7 +467,7 @@ describe('pm.response', () => {
         pm.test('missing required', () => pm.response.to.have.jsonSchema({ required: ['zzz'] }));
         pm.test('enum', () => pm.response.to.have.jsonSchema({ properties: { name: { enum: ['Ada', 'Bob'] } } }));
         pm.test('not valid', () => pm.response.to.not.have.jsonSchema({ type: 'array' }));
-        pm.test('unsupported keyword', () => pm.response.to.have.jsonSchema({ $ref: '#/definitions/x' }));
+        pm.test('unresolvable ref', () => pm.response.to.have.jsonSchema({ $ref: '#/definitions/x' }));
       `),
     );
     expectOk(r);
@@ -460,19 +477,22 @@ describe('pm.response', () => {
       ['missing required', false],
       ['enum', true],
       ['not valid', true],
-      ['unsupported keyword', false],
+      ['unresolvable ref', false],
     ]);
-    expect(testByName(r, 'invalid type').error).toContain('$.id should be string but was number');
-    expect(testByName(r, 'unsupported keyword').error).toContain('Unsupported JSON schema keyword "$ref"');
+    expect(testByName(r, 'invalid type').error).toContain('$.id must be string');
+    expect(testByName(r, 'missing required').error).toContain("must have required property 'zzz'");
+    expect(testByName(r, 'unresolvable ref').error).toMatch(/Invalid JSON schema: .*#\/definitions\/x/);
   });
 
-  it('pm.cookies never exposes httpOnly cookies and the jar is a read-only no-op', async () => {
+  it('pm.cookies never exposes httpOnly cookies; without a host jar reads use the request cookies and writes fail', async () => {
     const r = await run(
       makeInput(
         `
         pm.variables.set('out', JSON.stringify({ visible: pm.cookies.get('a'), secret: pm.cookies.get('h'), hasH: pm.cookies.has('h'), all: pm.cookies.toObject() }));
-        pm.cookies.jar().set('https://x.test', 'new', 'v', function () {});
+        pm.cookies.jar().set('https://x.test', 'new', 'v', function (err) { pm.variables.set('setErr', String(err && err.message)); });
         pm.cookies.jar().get('https://x.test', 'a', function (err, v) { pm.variables.set('viaJar', String(v)); });
+        const all = await pm.cookies.jar().getAll('https://x.test');
+        pm.variables.set('all', JSON.stringify(all.map((c) => c.name)));
         `,
         {
           cookies: [
@@ -485,7 +505,8 @@ describe('pm.response', () => {
     expectOk(r);
     expect(JSON.parse(r.variables.variables.out!)).toEqual({ visible: '1', hasH: false, all: { a: '1' } });
     expect(r.variables.variables.viaJar).toBe('1');
-    expect(r.console.some((c) => c.level === 'warn' && c.message.includes('no-op'))).toBe(true);
+    expect(r.variables.variables.all).toBe('["a"]');
+    expect(r.variables.variables.setErr).toContain('not available');
     expect(JSON.stringify(r)).not.toContain('hidden');
   });
 });
@@ -700,8 +721,8 @@ describe('additional API surface', () => {
     ]);
   });
 
-  it('pm.visualizer.set and postman.* extras fail with clear messages', async () => {
-    const r = await run(makeInput(`try { pm.visualizer.set('<p>'); } catch (e) { pm.variables.set('m', e.message); }`));
+  it('pm.require (Postman package library) fails with a clear message', async () => {
+    const r = await run(makeInput(`try { pm.require('@team/lib'); } catch (e) { pm.variables.set('m', e.message); }`));
     expectOk(r);
     expect(r.variables.variables.m).toContain('not supported');
   });
@@ -909,13 +930,14 @@ describe('top-level behaviour', () => {
     });
   });
 
-  it('gives clear errors for unsupported libraries and leaves require undefined', async () => {
+  it('exposes the Postman library globals lazily, keeps cheerio unavailable and require() defined', async () => {
     const r = await run(
       makeInput(`
         const probes = {};
-        for (const name of ['CryptoJS', '_', 'moment', 'cheerio', 'tv4', 'xml2Json']) {
-          try { globalThis[name]; probes[name] = 'accessible'; } catch (e) { probes[name] = e.message; }
+        for (const name of ['CryptoJS', '_', 'moment', 'tv4', 'xml2Json', 'Buffer']) {
+          try { probes[name] = typeof globalThis[name]; } catch (e) { probes[name] = e.message; }
         }
+        try { globalThis.cheerio; probes.cheerio = 'accessible'; } catch (e) { probes.cheerio = e.message; }
         try { pm.require('lodash'); } catch (e) { probes.pmRequire = e.message; }
         probes.requireType = typeof require;
         pm.variables.set('out', JSON.stringify(probes));
@@ -923,9 +945,10 @@ describe('top-level behaviour', () => {
     );
     expectOk(r);
     const out = JSON.parse(r.variables.variables.out!) as Record<string, string>;
-    for (const name of ['CryptoJS', '_', 'moment', 'cheerio', 'tv4', 'xml2Json']) expect(out[name]).toContain('not available in the Aegis script sandbox');
+    expect(out).toMatchObject({ CryptoJS: 'object', _: 'function', moment: 'function', tv4: 'object', xml2Json: 'function', Buffer: 'function' });
+    expect(out.cheerio).toContain('not available in the Aegis script sandbox');
     expect(out.pmRequire).toContain('not supported');
-    expect(out.requireType).toBe('undefined');
+    expect(out.requireType).toBe('function');
   });
 
   it('does not require network or other host input to run empty scripts', async () => {

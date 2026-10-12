@@ -9,7 +9,11 @@ export {
   DEFAULT_TIMEOUT_MS,
   MAX_CONSOLE_ENTRIES,
   MAX_CONSOLE_MESSAGE_CHARS,
+  MAX_COOKIE_OPS,
+  MAX_RANDOM_BYTES_PER_CALL,
+  MAX_RANDOM_CALLS,
   MAX_TESTS,
+  MAX_VISUALIZER_CHARS,
   resolveLimits,
 } from './limits';
 export type { ResolvedLimits } from './limits';

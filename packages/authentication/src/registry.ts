@@ -1,4 +1,8 @@
 import { AppError, type AuthConfig } from '@aegis/core';
+import { asapProvider } from './asap';
+import { digestProvider } from './digest';
+import { edgeGridProvider } from './edgegrid';
+import { hawkProvider } from './hawk';
 import { jwtProvider } from './jwt';
 import { oauth1Provider } from './oauth1';
 import { oauth2Provider } from './oauth2';
@@ -39,5 +43,19 @@ export class AuthRegistry {
 }
 
 export function createDefaultAuthRegistry(): AuthRegistry {
-  return new AuthRegistry([noneProvider, basicProvider, bearerProvider, apiKeyProvider, oauth2Provider, oauth1Provider, jwtProvider, awsV4Provider]);
+  return new AuthRegistry([
+    noneProvider,
+    basicProvider,
+    bearerProvider,
+    apiKeyProvider,
+    oauth2Provider,
+    oauth1Provider,
+    jwtProvider,
+    awsV4Provider,
+    // Postman "custom" providers (`type: 'custom'`, `params.providerId`): executable since this version.
+    digestProvider,
+    hawkProvider,
+    edgeGridProvider,
+    asapProvider,
+  ]);
 }

@@ -1,16 +1,22 @@
 import {
   AppError,
   emptyRequestDraft,
-  newId,
   type AegisApi,
+  type ExecutionResult,
   type HistoryItem,
   type RequestDraft,
   type RunnerItemEvent,
+  type RunnerItemResponse,
+  type VariableEntry,
 } from '@aegis/core';
+import { isSensitiveKey, redactText } from '@aegis/security';
 import { parseIterationData, runCollection, type RunnableRequest } from '@aegis/testing';
 import type { HistoryEntry } from '@aegis/storage';
 import type { AppContext } from '../context';
 import type { RequestExecutor } from '../executor';
+
+/** Bytes of response body kept per run item when `keepResponses` is on. */
+export const KEEP_RESPONSE_BYTES = 64 * 1024;
 
 function toItem(h: HistoryEntry): HistoryItem {
   return {
@@ -93,6 +99,30 @@ export function createHistoryService(ctx: AppContext, executor: RequestExecutor)
   };
 }
 
+/**
+ * Build the stored response head for a run item: status, non-sensitive headers
+ * and the redacted first {@link KEEP_RESPONSE_BYTES} of the body. Sensitive
+ * headers (Authorization, Cookie, Set-Cookie, tokens, API keys, ...) are
+ * removed entirely; known secret values and credential patterns are masked.
+ */
+export function redactRunResponse(result: ExecutionResult, secretValues: readonly string[], extraPatterns: readonly string[]): RunnerItemResponse | undefined {
+  const r = result.response;
+  if (!r) return undefined;
+  const headers = r.headers.filter((h) => !isSensitiveKey(h.name, extraPatterns)).map((h) => ({ name: h.name, value: h.value }));
+  // bodyPreview is UTF-8 text of the first 512 KiB (empty for binary bodies); keep at most 64 KiB of it.
+  const rawBody = r.isBinary ? '' : Buffer.from(r.bodyPreview, 'utf8').subarray(0, KEEP_RESPONSE_BYTES).toString('utf8');
+  const body = redactText(rawBody, secretValues, extraPatterns);
+  return {
+    status: r.status,
+    statusText: r.statusText,
+    contentType: r.contentType,
+    headers,
+    body,
+    bodyTruncated: r.isBinary ? r.size > 0 : r.size > Buffer.byteLength(rawBody, 'utf8'),
+    size: r.size,
+  };
+}
+
 export function createRunnerService(ctx: AppContext, executor: RequestExecutor): AegisApi['runner'] {
   const repos = () => ctx.storage.repos;
   const runs = new Map<string, { abort: AbortController; current?: string }>();
@@ -113,13 +143,42 @@ export function createRunnerService(ctx: AppContext, executor: RequestExecutor):
     return out;
   }
 
+  /** Apply `requestIds`: keep only the listed requests, in the listed order (unknown ids are ignored). */
+  function selectRequests(all: RunnableRequest[], requestIds: readonly string[] | undefined): RunnableRequest[] {
+    if (!requestIds || requestIds.length === 0) return all;
+    const byId = new Map(all.map((r) => [r.id, r]));
+    const seen = new Set<string>();
+    const out: RunnableRequest[] = [];
+    for (const id of requestIds) {
+      const r = byId.get(id);
+      if (r && !seen.has(id)) {
+        seen.add(id);
+        out.push(r);
+      }
+    }
+    return out;
+  }
+
+  /** Secret variable values of every scope the run can touch, for redacting stored responses. */
+  function secretValues(workspaceId: string, collectionId: string, environmentId: string | null): string[] {
+    const r = repos();
+    const pick = (list: VariableEntry[]) => list.filter((v) => v.isSecret).flatMap((v) => [v.initialValue, v.currentValue ?? '']).filter((v) => v.length >= 3);
+    const out = [...pick(r.vars.global.list(workspaceId, 'resolve')), ...pick(r.vars.collection.list(collectionId, 'resolve'))];
+    if (environmentId) out.push(...pick(r.environments.variables(environmentId, 'resolve')));
+    for (const row of r.collections.getTreeRows(collectionId)) if (row.kind === 'folder') out.push(...pick(r.vars.folder.list(row.id, 'resolve')));
+    return [...new Set(out)];
+  }
+
   return {
     async start(options) {
       const collection = repos().collections.requireCollection(options.collectionId);
-      const requests = collectRequests(options.collectionId, options.folderId);
-      if (requests.length === 0) throw new AppError('VALIDATION_FAILED', 'There are no requests to run.');
+      const requests = selectRequests(collectRequests(options.collectionId, options.folderId), options.requestIds);
+      if (requests.length === 0) throw new AppError('VALIDATION_FAILED', options.requestIds?.length ? 'None of the selected requests exist in this collection.' : 'There are no requests to run.');
       const data = options.dataFile ? parseIterationData(options.dataFile.name, options.dataFile.content) : [];
       const env = options.environmentId !== undefined ? options.environmentId : (repos().environments.getActive(options.workspaceId)?.id ?? null);
+      const keepResponses = options.keepResponses === true;
+      const secrets = keepResponses ? secretValues(options.workspaceId, collection.id, env) : [];
+      const redactionPatterns = ctx.settings().security.redactionPatterns;
       const runId = repos().runs.create({
         workspaceId: options.workspaceId,
         collectionId: collection.id,
@@ -133,10 +192,12 @@ export function createRunnerService(ctx: AppContext, executor: RequestExecutor):
       const state: { abort: AbortController; current?: string } = { abort };
       runs.set(runId, state);
       const startedAt = Date.now();
+      const responses = new Map<number, RunnerItemResponse>(); // step counter -> redacted response
 
       // Run in the background; progress is streamed with events.
       void (async () => {
         let locals: Record<string, string> = {};
+        let lastIteration = -1;
         let n = 0;
         try {
           const report = await runCollection({
@@ -147,8 +208,14 @@ export function createRunnerService(ctx: AppContext, executor: RequestExecutor):
             stopOnFailure: options.stopOnFailure,
             signal: abort.signal,
             async execute(req, c) {
-              if (c.iteration > 0 && n > 0 && req === requests[0]) locals = {}; // local variables live for one iteration
-              const executionId = `${runId}:${n++}`;
+              // Local variables live for exactly one iteration: reset when the iteration changes,
+              // never because a particular request (e.g. a setNextRequest jump back to the first one) runs.
+              if (c.iteration !== lastIteration) {
+                locals = {};
+                lastIteration = c.iteration;
+              }
+              const step = n++;
+              const executionId = `${runId}:${step}`;
               state.current = executionId;
               try {
                 const out = await executor.execute(
@@ -157,6 +224,10 @@ export function createRunnerService(ctx: AppContext, executor: RequestExecutor):
                 );
                 locals = out.localVariables;
                 const r = out.result;
+                if (keepResponses) {
+                  const head = redactRunResponse(r, secrets, redactionPatterns);
+                  if (head) responses.set(step, head);
+                }
                 return {
                   statusCode: r.response?.status ?? null,
                   durationMs: r.response?.timings.totalMs ?? null,
@@ -172,7 +243,9 @@ export function createRunnerService(ctx: AppContext, executor: RequestExecutor):
               }
             },
             onItem(item) {
-              const itemId = repos().runs.addItem(runId, {
+              const response = responses.get(item.index);
+              responses.delete(item.index);
+              repos().runs.addItem(runId, {
                 iteration: item.iteration,
                 requestId: item.request.id,
                 requestName: item.request.name,
@@ -184,8 +257,8 @@ export function createRunnerService(ctx: AppContext, executor: RequestExecutor):
                 error: item.error ?? null,
                 tests: item.tests,
                 sortOrder: item.index,
+                ...(response ? { response } : {}),
               });
-              void itemId;
               const event: RunnerItemEvent = {
                 runId,
                 index: item.index,
@@ -199,11 +272,12 @@ export function createRunnerService(ctx: AppContext, executor: RequestExecutor):
                 passed: item.passed,
                 ...(item.error ? { error: item.error } : {}),
                 tests: item.tests,
+                ...(response ? { response } : {}),
               };
               ctx.deps.emit('runner:item', event);
             },
           });
-          repos().runs.finish(runId, { status: report.status, totalRequests: report.totalRequests, passedTests: report.passedTests, failedTests: report.failedTests, summary: { failedRequests: report.failedRequests, iterations: report.iterationCount } });
+          repos().runs.finish(runId, { status: report.status, totalRequests: report.totalRequests, passedTests: report.passedTests, failedTests: report.failedTests, summary: { failedRequests: report.failedRequests, iterations: report.iterationCount, keepResponses, requestIds: requests.map((r) => r.id) } });
           ctx.deps.emit('runner:done', { runId, status: report.status, totalRequests: report.totalRequests, passedTests: report.passedTests, failedTests: report.failedTests, durationMs: Date.now() - startedAt });
         } catch (error) {
           ctx.deps.logger.error('collection run failed', error);
@@ -213,7 +287,6 @@ export function createRunnerService(ctx: AppContext, executor: RequestExecutor):
           runs.delete(runId);
         }
       })();
-      void newId;
       return { runId };
     },
 
@@ -252,6 +325,7 @@ export function createRunnerService(ctx: AppContext, executor: RequestExecutor):
         passed: i.passed,
         ...(i.error ? { error: i.error } : {}),
         tests: (i.tests as RunnerItemEvent['tests']) ?? [],
+        ...(i.response ? { response: i.response as RunnerItemResponse } : {}),
       }));
     },
   };

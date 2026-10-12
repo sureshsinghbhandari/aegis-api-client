@@ -142,6 +142,10 @@ function exportBody(r: RequestDraft): JsonObject | undefined {
       const options = rawOptions(body.rawLanguage, metadata[META.bodyOptions]);
       if (options) out.options = options;
     }
+  } else if (body.mode === 'graphql') {
+    const g = body.graphql ?? { query: '', variables: '' };
+    out = { mode: 'graphql', graphql: { query: g.query, variables: g.variables, ...(g.operationName ? { operationName: g.operationName } : {}) } };
+    if (isRecord(metadata[META.bodyOptions])) out.options = clone(metadata[META.bodyOptions]);
   } else {
     if (body.mode === 'urlencoded') out = { mode: 'urlencoded', urlencoded: (body.urlencoded ?? []).map((e) => withCommon({ key: e.key, value: e.value, type: 'text' }, e)) };
     else if (body.mode === 'formdata') out = { mode: 'formdata', formdata: (body.formData ?? []).map(exportFormData) };
@@ -281,6 +285,11 @@ function exportProfile(settings: RequestSettings, meta: JsonObject): JsonObject 
   if (settings.followRedirects !== undefined) out.followRedirects = settings.followRedirects;
   if (settings.maxRedirects !== undefined) out.maxRedirects = settings.maxRedirects;
   if (settings.verifyTls !== undefined) out.strictSSL = settings.verifyTls;
+  if (settings.disableCookies !== undefined) out.disableCookies = settings.disableCookies;
+  if (settings.encodeUrl !== undefined) out.disableUrlEncoding = !settings.encodeUrl;
+  if (settings.followOriginalHttpMethod !== undefined) out.followOriginalHttpMethod = settings.followOriginalHttpMethod;
+  if (settings.followAuthorizationHeader !== undefined) out.followAuthorizationHeader = settings.followAuthorizationHeader;
+  if (settings.removeRefererHeaderOnRedirect !== undefined) out.removeRefererHeaderOnRedirect = settings.removeRefererHeaderOnRedirect;
   mergeExtras(out, meta[META.protocolProfileBehavior]);
   return Object.keys(out).length > 0 ? out : undefined;
 }

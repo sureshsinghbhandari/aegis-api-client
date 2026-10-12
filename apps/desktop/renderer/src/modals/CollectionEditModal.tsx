@@ -1,6 +1,7 @@
 import type { AuthConfig, ScriptEntry } from '@aegis/core';
 import { useCallback, useEffect, useState } from 'react';
 import { AuthEditor } from '../components/AuthEditor';
+import { MarkdownEditor } from '../components/MarkdownPreview';
 import { Button, ErrorBanner, Modal, Spinner, Tabs } from '../components/ui';
 import { VariablesEditor } from '../components/VariablesEditor';
 import { api, errorMessage } from '../lib/api';
@@ -127,7 +128,7 @@ export default function CollectionEditModal({ props }: ModalComponentProps) {
                 { id: 'overview' as const, label: 'Overview' },
                 { id: 'auth' as const, label: 'Authorization', badge: data.auth.type !== 'none' && data.auth.type !== 'inherit' ? '●' : undefined },
                 { id: 'prerequest' as const, label: 'Pre-request Script' },
-                { id: 'tests' as const, label: 'Tests' },
+                { id: 'tests' as const, label: 'Post-response' },
                 { id: 'variables' as const, label: 'Variables', badge: varsDirty ? '●' : undefined },
               ]}
             />
@@ -139,10 +140,12 @@ export default function CollectionEditModal({ props }: ModalComponentProps) {
                     <span className="field-label">Name</span>
                     <input value={data.name} onChange={(e) => patch({ name: e.target.value })} autoFocus />
                   </label>
-                  <label className="field">
-                    <span className="field-label">Description</span>
-                    <textarea value={data.description} rows={8} onChange={(e) => patch({ description: e.target.value })} placeholder="Describe this collection: purpose, conventions, links…" />
-                  </label>
+                  <div className="field">
+                    <span className="field-label">Description (Markdown, previewed on the right)</span>
+                    <div className="ce-docs">
+                      <MarkdownEditor label={`${kind === 'collection' ? 'Collection' : 'Folder'} description`} value={data.description} onChange={(description) => patch({ description })} placeholder={`Describe this ${kind}: purpose, conventions, links…`} />
+                    </div>
+                  </div>
                 </>
               )}
               {section === 'auth' && (
@@ -159,12 +162,12 @@ export default function CollectionEditModal({ props }: ModalComponentProps) {
               )}
               {section === 'prerequest' && (
                 <div className="ce-script">
-                  <ScriptPanel phase="prerequest" scripts={data.scripts} onChange={(scripts) => patch({ scripts })} />
+                  <ScriptPanel phase="prerequest" scripts={data.scripts} onChange={(scripts) => patch({ scripts })} context={{ collectionId: data.collectionId, folderId: kind === 'folder' ? id : null }} />
                 </div>
               )}
               {section === 'tests' && (
                 <div className="ce-script">
-                  <ScriptPanel phase="test" scripts={data.scripts} onChange={(scripts) => patch({ scripts })} />
+                  <ScriptPanel phase="test" scripts={data.scripts} onChange={(scripts) => patch({ scripts })} context={{ collectionId: data.collectionId, folderId: kind === 'folder' ? id : null }} />
                 </div>
               )}
               {/* Kept mounted (hidden) so unsaved variable edits survive switching tabs. */}

@@ -21,7 +21,7 @@ export function TestSummary({ tests }: { tests: readonly TestResult[] }) {
 }
 
 export function TestResultsList({ tests, showSummary = true }: { tests: readonly TestResult[]; showSummary?: boolean }) {
-  if (tests.length === 0) return <div className="empty">No tests were run. Add <code>pm.test(...)</code> calls in the Tests tab of the request.</div>;
+  if (tests.length === 0) return <div className="empty">No tests were run. Add <code>pm.test(...)</code> calls in the Post-response tab of the request.</div>;
   return (
     <div className="tr-list">
       {showSummary && (

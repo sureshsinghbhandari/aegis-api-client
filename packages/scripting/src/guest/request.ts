@@ -217,6 +217,24 @@ $defineProperty(request, 'url', {
   configurable: true,
 });
 
+// pm.request.auth: a frozen, read-only view (credential parameters are masked by the host before they get here).
+function buildRequestAuth(a) {
+  if (!a || typeof a !== 'object') return undefined;
+  const type = a.type === 'none' ? 'noauth' : String(a.type);
+  const params = a.params && typeof a.params === 'object' ? a.params : {};
+  const items = $keys(params).map(function (k) {
+    const v = params[k];
+    return Object.freeze({ key: k, value: v, type: typeof v === 'boolean' ? 'boolean' : typeof v === 'number' ? 'number' : 'string' });
+  });
+  const auth = { type: type };
+  setOwn(auth, type, Object.freeze(items.slice()));
+  hidden(auth, 'parameters', function parameters() { return new PropertyList('auth', false, items.map(function (it) { return { key: it.key, value: it.value }; })); });
+  hidden(auth, 'toJSON', function toJSON() { const o = { type: type }; setOwn(o, type, items.map(function (it) { return { key: it.key, value: it.value, type: it.type }; })); return o; });
+  hidden(auth, 'toString', function toString() { return type; });
+  return Object.freeze(auth);
+}
+$defineProperty(request, 'auth', { value: buildRequestAuth(input.auth), writable: false, enumerable: true, configurable: false });
+
 function requestSnapshot() {
   if (phase !== 'prerequest') return null;
   const headers = itemsOf(request.headers).map(function (h) {

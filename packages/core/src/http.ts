@@ -69,6 +69,56 @@ export interface HttpRequestSpec {
   spillThresholdBytes?: number;
   /** Directory for spilled bodies (defaults to the OS temp dir). */
   spillDirectory?: string;
+  /** `auto` (default): HTTP/2 over TLS when offered via ALPN; `1.1` forces HTTP/1.1; `2` prefers HTTP/2. */
+  httpVersion?: 'auto' | '1.1' | '2';
+  /** Skip the cookie jar hook for this request (nothing sent from, nothing stored into the jar). */
+  disableCookies?: boolean;
+  /** Keep method and body on 301/302/303 redirects instead of switching to GET. */
+  followOriginalHttpMethod?: boolean;
+  /** Keep the Authorization header on cross-origin redirects (dangerous; off by default, surfaced in notes). */
+  followAuthorizationHeader?: boolean;
+  /** Drop a Referer header when following a redirect. */
+  removeRefererHeaderOnRedirect?: boolean;
+  /** Informational: the URL was built without percent-encoding the query (`encodeUrl: false`). */
+  encodeUrl?: boolean;
+  /** Host name overrides applied at DNS lookup time (host -> IP literal). Already policy-filtered by the caller. */
+  hosts?: Record<string, string>;
+  /** The only directory relative file paths (form-data / binary bodies) may resolve inside; absolute paths are validated as before. */
+  workingDirectory?: string;
+}
+
+/** TLS details of the connection that served the final response. Never contains key material. */
+export interface TlsConnectionInfo {
+  /** e.g. `TLSv1.3` */
+  protocol: string;
+  /** Cipher suite name, e.g. `TLS_AES_256_GCM_SHA384`. */
+  cipher: string;
+  /** Negotiated ALPN protocol (`h2`, `http/1.1`) or empty. */
+  alpn: string;
+  /** Whether the peer certificate chain was verified (false only when verification was disabled). */
+  authorized: boolean;
+  peerCertificate?: {
+    subject: string;
+    issuer: string;
+    /** ISO timestamps. */
+    validFrom: string;
+    validTo: string;
+    /** SHA-256 fingerprint. */
+    fingerprint: string;
+    subjectAltName?: string;
+  };
+}
+
+/** Transport details of the connection that served the final response. */
+export interface ConnectionInfo {
+  remoteAddress: string;
+  remotePort: number;
+  localAddress: string;
+  localPort: number;
+  /** True when the connection was created by a hosts override rather than DNS. */
+  hostOverride?: string;
+  /** True when no new connection was opened for the final hop (DNS/connect/TLS timings are then 0). */
+  reused: boolean;
 }
 
 export interface RedirectHop {
@@ -85,6 +135,12 @@ export interface ResponseTimings {
   /** Time spent receiving the body. */
   downloadMs: number;
   totalMs: number;
+  /** DNS lookup for the final hop's connection (0 when an IP literal, a hosts override or a reused connection was used). */
+  dnsMs?: number;
+  /** TCP connect for the final hop's connection. */
+  connectMs?: number;
+  /** TLS handshake for the final hop's connection (0 for plain http). */
+  tlsMs?: number;
 }
 
 export interface HttpResponse {
@@ -110,6 +166,10 @@ export interface HttpResponse {
   setCookies: string[];
   /** TLS notes surfaced to the timeline, e.g. "certificate validation disabled". */
   notes: string[];
+  /** TLS details of the final hop's connection (https only). */
+  tls?: TlsConnectionInfo;
+  /** Transport details of the final hop's connection (not available through a proxy). */
+  connection?: ConnectionInfo;
 }
 
 /** Hook the HTTP engine uses to apply a cookie jar on every hop (including redirects). */

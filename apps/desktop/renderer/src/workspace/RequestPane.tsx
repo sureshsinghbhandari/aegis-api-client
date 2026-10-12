@@ -1,18 +1,30 @@
 import { useMemo, useState } from 'react';
+import { MarkdownEditor } from '../components/MarkdownPreview';
 import { Tabs } from '../components/ui';
 import { hasScript } from '../lib/scripts';
+import { ExamplesTab } from '../response/ExamplesTab';
 import type { OpenTab } from '../store/app';
 import { BodyTab } from './BodyTab';
-import { AuthTab, DocsTab, SettingsTab } from './MiscTabs';
+import { AuthTab, SettingsTab } from './MiscTabs';
 import { HeadersTab, ParamsTab } from './ParamsHeadersTabs';
-import { ScriptPanel } from './ScriptPanel';
+import { ScriptPanel, type ScriptContext } from './ScriptPanel';
 import { UrlBar } from './UrlBar';
 import { useDraftUpdate } from './useDraft';
 
-type SectionId = 'params' | 'headers' | 'body' | 'auth' | 'prerequest' | 'tests' | 'settings' | 'docs';
+type SectionId = 'params' | 'headers' | 'body' | 'auth' | 'prerequest' | 'tests' | 'examples' | 'settings' | 'docs';
 
 // The selected section is remembered per tab while the app is running.
 const lastSection = new Map<string, SectionId>();
+
+/** Description editor with a sandboxed Markdown preview next to it. */
+function DocsSection({ tab }: { tab: OpenTab }) {
+  const update = useDraftUpdate(tab);
+  return (
+    <div className="wb-pane-scroll wb-docs">
+      <MarkdownEditor label="Request description" value={tab.draft.description} onChange={(description) => update({ description })} placeholder="Describe this request: purpose, expected inputs and outputs… (Markdown)" />
+    </div>
+  );
+}
 
 export function RequestPane({ tab }: { tab: OpenTab }) {
   const update = useDraftUpdate(tab);
@@ -34,11 +46,13 @@ export function RequestPane({ tab }: { tab: OpenTab }) {
       { id: 'body' as const, label: 'Body', badge: draft.body.mode !== 'none' ? dot : undefined },
       { id: 'auth' as const, label: 'Authorization', badge: authBadge },
       { id: 'prerequest' as const, label: 'Pre-request Script', badge: hasScript(draft.scripts, 'prerequest') ? dot : undefined },
-      { id: 'tests' as const, label: 'Tests', badge: hasScript(draft.scripts, 'test') ? dot : undefined },
+      { id: 'tests' as const, label: 'Post-response', badge: hasScript(draft.scripts, 'test') ? dot : undefined },
+      { id: 'examples' as const, label: 'Examples', badge: draft.examples.length || undefined },
       { id: 'settings' as const, label: 'Settings' },
       { id: 'docs' as const, label: 'Docs', badge: draft.description.trim() ? dot : undefined },
     ];
-  }, [draft.queryParams, draft.headers, draft.body.mode, draft.auth.type, draft.scripts, draft.description]);
+  }, [draft.queryParams, draft.headers, draft.body.mode, draft.auth.type, draft.scripts, draft.examples.length, draft.description]);
+  const scriptContext: ScriptContext = { collectionId: tab.collectionId, folderId: tab.folderId, variableChanges: tab.response.result?.variableChanges };
 
   return (
     <div className="wb-request">
@@ -59,10 +73,11 @@ export function RequestPane({ tab }: { tab: OpenTab }) {
         {section === 'headers' && <HeadersTab tab={tab} />}
         {section === 'body' && <BodyTab tab={tab} />}
         {section === 'auth' && <AuthTab tab={tab} />}
-        {section === 'prerequest' && <ScriptPanel phase="prerequest" scripts={draft.scripts} onChange={(scripts) => update({ scripts })} />}
-        {section === 'tests' && <ScriptPanel phase="test" scripts={draft.scripts} onChange={(scripts) => update({ scripts })} />}
+        {section === 'prerequest' && <ScriptPanel phase="prerequest" scripts={draft.scripts} onChange={(scripts) => update({ scripts })} context={scriptContext} />}
+        {section === 'tests' && <ScriptPanel phase="test" scripts={draft.scripts} onChange={(scripts) => update({ scripts })} context={scriptContext} />}
+        {section === 'examples' && <ExamplesTab tab={tab} />}
         {section === 'settings' && <SettingsTab tab={tab} />}
-        {section === 'docs' && <DocsTab tab={tab} />}
+        {section === 'docs' && <DocsSection tab={tab} />}
       </div>
     </div>
   );

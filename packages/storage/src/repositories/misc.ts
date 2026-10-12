@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, like, lt, sql } from 'drizzle-orm';
-import { DEFAULT_SETTINGS, mergeSettings, newId, type AppSettings, type ImportWarningModel, type ImportStats } from '@aegis/core';
+import { AppError, DEFAULT_SETTINGS, mergeSettings, newId, type AppSettings, type ImportWarningModel, type ImportStats } from '@aegis/core';
 import type { AuditSink, AuditAction, SecretBlobStore, SyncSecretStorage } from '@aegis/security';
 import type { DbHandle } from '../database';
 import { auditLogs, backups, certificates, collectionRunItems, collectionRuns, cookies, importJobs, importWarnings, secrets, settings } from '../schema';
@@ -112,6 +112,86 @@ export interface StoredCookie {
   createdAt: string;
 }
 
+export type CookieAttributes = Omit<StoredCookie, 'id' | 'createdAt' | 'workspaceId'>;
+
+const COOKIE_SAME_SITE = ['Strict', 'Lax', 'None'] as const;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+const COOKIE_NAME = /^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$/;
+const DOMAIN_LABEL = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+/** Validate a cookie domain typed by hand. Returns the normalised form (lower-case, leading dot kept). */
+export function normalizeCookieDomain(input: string): string {
+  const raw = input.trim().toLowerCase();
+  if (raw === '' || raw === '*' || raw === '.') throw new AppError('VALIDATION_FAILED', 'A cookie needs a domain (for example api.example.com).');
+  if (raw.length > 253) throw new AppError('VALIDATION_FAILED', 'The cookie domain is too long.');
+  if (/^[a-z][a-z0-9+.-]*:\/\//.test(raw) || raw.includes('/') || raw.includes(':') || raw.includes('@') || /\s/.test(raw)) {
+    throw new AppError('VALIDATION_FAILED', 'Enter a host name only (no scheme, port or path).');
+  }
+  if (raw.includes('*')) throw new AppError('VALIDATION_FAILED', 'Wildcards are not allowed in a cookie domain.');
+  const host = raw.replace(/^\./, '');
+  if (host === '') throw new AppError('VALIDATION_FAILED', 'A cookie needs a domain (for example api.example.com).');
+  const ipv4 = /^(\d{1,3})(\.\d{1,3}){3}$/.test(host);
+  if (!ipv4 && !host.split('.').every((label) => label !== '' && DOMAIN_LABEL.test(label))) {
+    throw new AppError('VALIDATION_FAILED', 'The cookie domain contains invalid characters.');
+  }
+  return raw;
+}
+
+/**
+ * Validate and normalise attributes of a cookie entered in the manager. Throws `VALIDATION_FAILED`
+ * with a user-facing message. `value` is checked for cookie-octet safety only (it is stored in the vault).
+ */
+export function normalizeCookieInput(input: {
+  domain: string;
+  path?: string | undefined;
+  name: string;
+  value: string;
+  hostOnly?: boolean | undefined;
+  secure?: boolean | undefined;
+  httpOnly?: boolean | undefined;
+  sameSite?: string | null | undefined;
+  expiresAt?: string | null | undefined;
+}): CookieAttributes {
+  const domain = normalizeCookieDomain(input.domain);
+  const name = input.name.trim();
+  if (name === '') throw new AppError('VALIDATION_FAILED', 'A cookie needs a name.');
+  if (name.length > 4096 || !COOKIE_NAME.test(name)) throw new AppError('VALIDATION_FAILED', 'The cookie name contains characters that are not allowed (no spaces, "=", ";" or ",").');
+  if (input.value.length > 64 * 1024) throw new AppError('VALIDATION_FAILED', 'The cookie value is too long.');
+  if (CONTROL_CHARS.test(input.value) || /[;]/.test(input.value) || /\s/.test(input.value)) {
+    throw new AppError('VALIDATION_FAILED', 'The cookie value must not contain spaces, semicolons or control characters.');
+  }
+  const path = (input.path ?? '').trim() || '/';
+  if (!path.startsWith('/') || CONTROL_CHARS.test(path) || path.includes(';') || /\s/.test(path) || path.length > 2000) {
+    throw new AppError('VALIDATION_FAILED', 'The cookie path must start with "/" and contain no spaces or semicolons.');
+  }
+  let sameSite: string | null = null;
+  if (input.sameSite) {
+    const match = COOKIE_SAME_SITE.find((s) => s.toLowerCase() === input.sameSite!.trim().toLowerCase());
+    if (!match) throw new AppError('VALIDATION_FAILED', 'SameSite must be Strict, Lax or None.');
+    sameSite = match;
+  }
+  const secure = input.secure ?? false;
+  if (sameSite === 'None' && !secure) throw new AppError('VALIDATION_FAILED', 'A SameSite=None cookie must also be Secure.');
+  let expiresAt: string | null = null;
+  if (input.expiresAt) {
+    const t = Date.parse(input.expiresAt);
+    if (Number.isNaN(t)) throw new AppError('VALIDATION_FAILED', 'The expiry date is not valid.');
+    if (t > Date.UTC(9999, 11, 31)) throw new AppError('VALIDATION_FAILED', 'The expiry date is too far in the future.');
+    expiresAt = new Date(t).toISOString();
+  }
+  return {
+    domain,
+    path,
+    name,
+    value: input.value,
+    hostOnly: input.hostOnly ?? !domain.startsWith('.'),
+    secure,
+    httpOnly: input.httpOnly ?? false,
+    sameSite,
+    expiresAt,
+  };
+}
+
 /** Cookie persistence. Cookie VALUES live in secret storage (they are session credentials). */
 export class CookieRepository {
   constructor(
@@ -167,6 +247,64 @@ export class CookieRepository {
     };
     if (existing) this.db.update(cookies).set(values).where(eq(cookies.id, id)).run();
     else this.db.insert(cookies).values({ id, ...values, createdAt: this.now() }).run();
+  }
+
+  /** One cookie with its value masked (empty). */
+  get(id: string): StoredCookie | null {
+    const r = this.db.select().from(cookies).where(eq(cookies.id, id)).get();
+    if (!r) return null;
+    return this.list(r.workspaceId).find((c) => c.id === id) ?? null;
+  }
+
+  private findIdentity(workspaceId: string, domain: string, path: string, name: string): { id: string } | undefined {
+    return this.db
+      .select({ id: cookies.id })
+      .from(cookies)
+      .where(and(eq(cookies.workspaceId, workspaceId), eq(cookies.domain, domain), eq(cookies.path, path), eq(cookies.name, name)))
+      .get();
+  }
+
+  /**
+   * Manual add from the cookie manager. Attributes are validated (`normalizeCookieInput`), the value goes
+   * to secret storage; duplicates (same domain/path/name) are refused.
+   */
+  add(input: { workspaceId: string } & Parameters<typeof normalizeCookieInput>[0]): StoredCookie {
+    const c = normalizeCookieInput(input);
+    if (this.findIdentity(input.workspaceId, c.domain, c.path, c.name)) {
+      throw new AppError('VALIDATION_FAILED', `A cookie named "${c.name}" already exists for ${c.domain}${c.path}. Edit it instead.`);
+    }
+    this.upsert({ ...c, workspaceId: input.workspaceId });
+    const created = this.findIdentity(input.workspaceId, c.domain, c.path, c.name);
+    return this.get(created!.id)!;
+  }
+
+  /**
+   * Manual edit. `value` undefined keeps the stored value (it is never read back for validation);
+   * the merged attributes are validated and checked against the uniqueness of domain/path/name.
+   */
+  update(id: string, patch: Partial<CookieAttributes>): StoredCookie {
+    const row = this.db.select().from(cookies).where(eq(cookies.id, id)).get();
+    if (!row) throw new AppError('NOT_FOUND', 'Cookie not found.', { id });
+    const c = normalizeCookieInput({
+      domain: patch.domain ?? row.domain,
+      path: patch.path ?? row.path,
+      name: patch.name ?? row.name,
+      value: patch.value ?? '',
+      hostOnly: patch.hostOnly ?? row.hostOnly,
+      secure: patch.secure ?? row.secure,
+      httpOnly: patch.httpOnly ?? row.httpOnly,
+      sameSite: patch.sameSite === undefined ? row.sameSite : patch.sameSite,
+      expiresAt: patch.expiresAt === undefined ? row.expiresAt : patch.expiresAt,
+    });
+    const clash = this.findIdentity(row.workspaceId, c.domain, c.path, c.name);
+    if (clash && clash.id !== id) throw new AppError('VALIDATION_FAILED', `A cookie named "${c.name}" already exists for ${c.domain}${c.path}.`);
+    this.db
+      .update(cookies)
+      .set({ domain: c.domain, path: c.path, name: c.name, hostOnly: c.hostOnly, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite, expiresAt: c.expiresAt })
+      .where(eq(cookies.id, id))
+      .run();
+    if (patch.value !== undefined) this.secretStore.setSync(row.valueRef, patch.value);
+    return this.get(id)!;
   }
 
   delete(id: string): void {
@@ -409,6 +547,8 @@ export interface RunItemInput {
   error?: string | null;
   tests?: unknown;
   sortOrder: number;
+  /** Redacted response head (already stripped of sensitive headers by the caller); stored as JSON. */
+  response?: unknown;
 }
 
 export class RunRepository {
@@ -441,6 +581,7 @@ export class RunRepository {
         error: item.error ?? null,
         testsJson: item.tests === undefined ? null : toJson(item.tests),
         sortOrder: item.sortOrder,
+        responseJson: item.response === undefined ? null : toJson(item.response),
       })
       .run();
     return id;
@@ -472,7 +613,7 @@ export class RunRepository {
       .where(eq(collectionRunItems.runId, runId))
       .orderBy(asc(collectionRunItems.sortOrder))
       .all()
-      .map((r) => ({ ...r, tests: parseJson<unknown>(r.testsJson, []) }));
+      .map((r) => ({ ...r, tests: parseJson<unknown>(r.testsJson, []), response: r.responseJson === null ? null : parseJson<unknown>(r.responseJson, null) }));
   }
 
   delete(runId: string): void {

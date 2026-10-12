@@ -147,6 +147,10 @@ export class VariableResolver {
     if (body.raw !== undefined) out.raw = this.resolveString(body.raw);
     if (body.filePath !== undefined) out.filePath = this.resolveString(body.filePath);
     if (body.urlencoded) out.urlencoded = this.resolveEntries(body.urlencoded);
+    if (body.graphql) {
+      out.graphql = { ...body.graphql, query: this.resolveString(body.graphql.query), variables: this.resolveString(body.graphql.variables) };
+      if (body.graphql.operationName !== undefined) out.graphql.operationName = this.resolveString(body.graphql.operationName);
+    }
     if (body.formData) {
       out.formData = body.formData.map((f): FormDataEntry => {
         if (f.type === 'variable') {

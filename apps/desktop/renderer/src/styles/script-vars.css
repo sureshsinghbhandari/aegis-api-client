@@ -1,0 +1,174 @@
+/* Script editor: variables side pane (ScriptVariablesPane) and the header help popover. */
+.sv {
+  width: 280px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: 12px;
+}
+.sv-toolbar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.sv-filter {
+  flex: 1;
+  min-width: 0;
+}
+.sv-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-hover);
+}
+.sv-form-actions {
+  display: flex;
+  gap: 4px;
+}
+.sv-form-hint {
+  color: var(--text-dim);
+}
+.sv-form-error {
+  color: var(--danger);
+}
+.sv-center {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+}
+.sv-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.sv-group-title {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 8px 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+.sv-empty {
+  padding: 4px 8px 6px;
+  color: var(--text-faint);
+}
+.sv-row {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.sv-row:hover {
+  background: var(--bg-hover);
+}
+.sv-disabled {
+  opacity: 0.55;
+}
+.sv-row-main {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+.sv-key {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.sv-row-value {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  color: var(--text-dim);
+}
+.sv-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sv-masked {
+  letter-spacing: 0.1em;
+}
+.sv-faint {
+  color: var(--text-faint);
+}
+.sv-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.sv-act {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+.sv-act:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.sv-hint {
+  margin: 0;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+/* Header controls shared by both script phases. */
+.sc-help-wrap {
+  position: relative;
+}
+.sc-help {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  width: 360px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated, var(--bg));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+}
+.sc-help h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.sc-help p {
+  margin: 0 0 6px;
+  color: var(--text-dim);
+}
+.sc-help code {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+}
+.sc-help pre {
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+}

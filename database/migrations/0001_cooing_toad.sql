@@ -1,0 +1,1 @@
+ALTER TABLE `collection_run_items` ADD `response_json` text;

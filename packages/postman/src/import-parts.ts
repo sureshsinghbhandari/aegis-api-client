@@ -396,7 +396,7 @@ export function convertAuth(w: WarningCollector, raw: unknown, path: string, lev
   if (internal === 'none') return { auth: { type: 'none', params: {} }, ...(meta.extras ? { meta } : {}) };
   let params = readAuthParams(w, raw[type], `${path}.${type}`, meta);
   if (internal === 'custom') {
-    w.warn(path, `Auth type "${type}" is not natively supported; imported as a custom provider and preserved for export (not executable)`, { type });
+    w.warn(path, `Auth type "${type}" is not natively supported; imported as a custom provider and preserved for export`, { type });
     params = { providerId: type, ...params };
   }
   const result: ImportedAuth = { auth: { type: internal, params } };
@@ -525,6 +525,11 @@ export function convertProtocolProfile(w: WarningCollector, raw: unknown, path: 
     } else if (key === 'followRedirects' && typeof value === 'boolean') settings.followRedirects = value;
     else if (key === 'maxRedirects' && typeof value === 'number') settings.maxRedirects = value;
     else if (key === 'strictSSL' && typeof value === 'boolean') settings.verifyTls = value;
+    else if (key === 'disableCookies' && typeof value === 'boolean') settings.disableCookies = value;
+    else if (key === 'disableUrlEncoding' && typeof value === 'boolean') settings.encodeUrl = !value;
+    else if (key === 'followOriginalHttpMethod' && typeof value === 'boolean') settings.followOriginalHttpMethod = value;
+    else if (key === 'followAuthorizationHeader' && typeof value === 'boolean') settings.followAuthorizationHeader = value;
+    else if (key === 'removeRefererHeaderOnRedirect' && typeof value === 'boolean') settings.removeRefererHeaderOnRedirect = value;
     else {
       remainder[key] = cloneAt(w, value, `${path}.${key}`);
       w.info(`${path}.${key}`, `protocolProfileBehavior "${key}" is not supported by the request engine; preserved in metadata`, value);

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RunSummary, RunnerItemEvent } from '@aegis/core';
 import { api, errorMessage } from '../lib/api';
 import { downloadText } from '../lib/download';
-import { formatRunnerRow, groupByIteration, resultsToCsv, resultsToJson, summarizeItems } from '../lib/runner-helpers';
+import { formatRunnerRow, groupByIteration, resultsToCsv, resultsToHtml, resultsToJUnit, resultsToJson, summarizeItems } from '../lib/runner-helpers';
 import { relativeTime } from '../lib/ui-format';
 import { Badge, Button, EmptyState, ErrorBanner, MethodLabel, Spinner, formatMs } from '../components/ui';
 import { useApp } from '../store/app';
@@ -54,11 +54,14 @@ export default function RunnerPanel() {
   const stats = run ? summarizeItems(run.items) : null;
   const groups = run ? groupByIteration(run.items) : [];
 
-  const exportAs = (kind: 'json' | 'csv') => {
+  const exportAs = (kind: 'json' | 'csv' | 'junit' | 'html') => {
     if (!run) return;
     const base = `run-${run.label}-${new Date(run.startedAt).toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
-    if (kind === 'json') downloadText(`${base}.json`, resultsToJson(run.items, { runId: run.runId, label: run.label, ...(run.done ? { status: run.done.status } : {}) }), 'application/json');
-    else downloadText(`${base}.csv`, resultsToCsv(run.items), 'text/csv');
+    const status = run.done?.status;
+    if (kind === 'json') downloadText(`${base}.json`, resultsToJson(run.items, { runId: run.runId, label: run.label, ...(status ? { status } : {}) }), 'application/json');
+    else if (kind === 'csv') downloadText(`${base}.csv`, resultsToCsv(run.items), 'text/csv');
+    else if (kind === 'junit') downloadText(`${base}.junit.xml`, resultsToJUnit(run.items, run.label), 'application/xml');
+    else downloadText(`${base}.html`, resultsToHtml(run.items, { label: run.label, startedAt: run.startedAt, ...(status ? { status } : {}) }), 'text/html');
   };
 
   return (
@@ -89,6 +92,12 @@ export default function RunnerPanel() {
             </Button>
             <Button size="sm" onClick={() => exportAs('csv')}>
               Export CSV
+            </Button>
+            <Button size="sm" onClick={() => exportAs('junit')} title="JUnit XML for CI systems">
+              Export JUnit
+            </Button>
+            <Button size="sm" onClick={() => exportAs('html')} title="Self-contained HTML report (no scripts)">
+              Export HTML
             </Button>
           </>
         )}
@@ -179,7 +188,7 @@ export default function RunnerPanel() {
 function RunnerRow({ item }: { item: RunnerItemEvent }) {
   const [open, setOpen] = useState(!item.passed);
   const failedTests = item.tests.filter((t) => !t.passed && !t.skipped).length;
-  const expandable = item.tests.length > 0 || Boolean(item.error);
+  const expandable = item.tests.length > 0 || Boolean(item.error) || Boolean(item.response);
   const text = formatRunnerRow(item);
   return (
     <div className={`runner-row ${item.passed ? 'pass' : 'fail'}`}>
@@ -212,6 +221,17 @@ function RunnerRow({ item }: { item: RunnerItemEvent }) {
                 </li>
               ))}
             </ul>
+          )}
+          {item.response && (
+            <details className="runner-response">
+              <summary>
+                Response {item.response.status} {item.response.statusText} · {item.response.contentType || 'no content type'} · {item.response.size} bytes
+                {item.response.bodyTruncated ? ' (first 64 KiB kept)' : ''}
+              </summary>
+              <pre className="mono runner-response-headers">{item.response.headers.map((h) => `${h.name}: ${h.value}`).join('\n')}</pre>
+              <pre className="mono runner-response-body">{item.response.body || (item.response.size > 0 ? '[binary body not stored]' : '[empty body]')}</pre>
+              <span className="field-hint">Stored redacted: sensitive headers removed, credential patterns masked.</span>
+            </details>
           )}
         </div>
       )}

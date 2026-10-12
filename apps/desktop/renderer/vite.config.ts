@@ -10,7 +10,10 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     // Only the pure type/helper package is importable from the renderer.
-    alias: { '@aegis/core': path.resolve(root, '../../../packages/core/src/index.ts') },
+    alias: {
+      '@aegis/core': path.resolve(root, '../../../packages/core/src/index.ts'),
+      '@aegis/codegen': path.resolve(root, '../../../packages/codegen/src/index.ts'),
+    },
   },
   build: {
     outDir: path.resolve(root, '../../../dist/renderer'),

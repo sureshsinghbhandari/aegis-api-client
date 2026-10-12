@@ -55,8 +55,12 @@ function form(entries: Array<[string, string]>): string {
   return new URLSearchParams(entries.filter(([, v]) => v !== '')).toString();
 }
 
-async function requestToken(params: AuthParams, context: AuthContext, url: string, body: Array<[string, string]>): Promise<OAuth2Token> {
-  if (!url) throw new AppError('AUTH_FAILED', 'OAuth 2.0 requires an access token URL.');
+/**
+ * POST a form to an OAuth endpoint with client authentication (Basic header by default, or in the
+ * body when `client_authentication` is `body`). Returns the status and the parsed JSON (or
+ * form-encoded) body; never throws on a non-2xx status so callers can inspect `error`.
+ */
+async function postForm(params: AuthParams, context: AuthContext, url: string, body: Array<[string, string]>, options: { alwaysClientIdInBody?: boolean } = {}): Promise<{ status: number; json: Record<string, unknown> }> {
   const clientId = str(params, 'clientId');
   const clientSecret = str(params, 'clientSecret');
   const headers = [
@@ -65,6 +69,10 @@ async function requestToken(params: AuthParams, context: AuthContext, url: strin
   ];
   if (str(params, 'client_authentication', 'header') === 'body') {
     body.push(['client_id', clientId], ['client_secret', clientSecret]);
+  } else if (options.alwaysClientIdInBody) {
+    // Device flow (RFC 8628 sections 3.1 and 3.4): the client id always travels in the body; only confidential clients add Basic auth.
+    body.push(['client_id', clientId]);
+    if (clientSecret) headers.push({ name: 'Authorization', value: `Basic ${Buffer.from(`${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`).toString('base64')}` });
   } else if (clientId || clientSecret) {
     headers.push({ name: 'Authorization', value: `Basic ${Buffer.from(`${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`).toString('base64')}` });
   }
@@ -76,10 +84,14 @@ async function requestToken(params: AuthParams, context: AuthContext, url: strin
     // Some servers answer form-encoded.
     json = Object.fromEntries(new URLSearchParams(response.bodyText));
   }
-  if (response.status < 200 || response.status >= 300 || typeof json.access_token !== 'string') {
-    const reason = typeof json.error_description === 'string' ? json.error_description : typeof json.error === 'string' ? json.error : `HTTP ${response.status}`;
-    throw new AppError('AUTH_FAILED', `The token endpoint rejected the request: ${reason}`, { status: response.status });
-  }
+  return { status: response.status, json };
+}
+
+function errorReason(status: number, json: Record<string, unknown>): string {
+  return typeof json.error_description === 'string' ? json.error_description : typeof json.error === 'string' ? json.error : `HTTP ${status}`;
+}
+
+function tokenFromJson(context: AuthContext, json: Record<string, unknown> & { access_token: string }): OAuth2Token {
   const expiresIn = Number(json.expires_in);
   return {
     accessToken: json.access_token,
@@ -88,6 +100,118 @@ async function requestToken(params: AuthParams, context: AuthContext, url: strin
     ...(Number.isFinite(expiresIn) && expiresIn > 0 ? { expiresAt: context.now() + expiresIn * 1000 } : {}),
     ...(typeof json.scope === 'string' ? { scope: json.scope } : {}),
   };
+}
+
+async function requestToken(params: AuthParams, context: AuthContext, url: string, body: Array<[string, string]>): Promise<OAuth2Token> {
+  if (!url) throw new AppError('AUTH_FAILED', 'OAuth 2.0 requires an access token URL.');
+  const { status, json } = await postForm(params, context, url, body);
+  if (status < 200 || status >= 300 || typeof json.access_token !== 'string') {
+    throw new AppError('AUTH_FAILED', `The token endpoint rejected the request: ${errorReason(status, json)}`, { status });
+  }
+  return tokenFromJson(context, json as Record<string, unknown> & { access_token: string });
+}
+
+// ----------------------------------------------------------------------------- device authorization grant (RFC 8628)
+
+export const DEVICE_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
+const DEVICE_DEFAULT_INTERVAL_S = 5;
+const DEVICE_MAX_INTERVAL_S = 60;
+
+/** Response of the device authorization endpoint (RFC 8628 section 3.2). The `deviceCode` is a credential: keep it in memory only. */
+export interface DeviceAuthorization {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete?: string;
+  /** Seconds until the device code expires. */
+  expiresIn: number;
+  /** Minimum seconds between token polls. */
+  interval: number;
+}
+
+/**
+ * Step 1 of the device flow: ask the device authorization endpoint (`deviceAuthUrl`, falling back
+ * to `authUrl`) for a device code and a user code to show to the user.
+ */
+export async function startDeviceFlow(params: AuthParams, context: AuthContext): Promise<DeviceAuthorization> {
+  const url = str(params, 'deviceAuthUrl') || str(params, 'authUrl');
+  if (!url) throw new AppError('AUTH_FAILED', 'The device flow requires a device authorization URL.');
+  const clientId = str(params, 'clientId');
+  if (!clientId) throw new AppError('AUTH_FAILED', 'The device flow requires a client ID.');
+  const { status, json } = await postForm(params, context, url, [['scope', str(params, 'scope')], ...extras(params)], { alwaysClientIdInBody: true });
+  if (status < 200 || status >= 300 || typeof json.device_code !== 'string' || typeof json.user_code !== 'string') {
+    throw new AppError('AUTH_FAILED', `The device authorization endpoint rejected the request: ${errorReason(status, json)}`, { status });
+  }
+  const verificationUri = typeof json.verification_uri === 'string' ? json.verification_uri : typeof json.verification_url === 'string' ? json.verification_url : '';
+  if (!verificationUri) throw new AppError('AUTH_FAILED', 'The device authorization response has no verification URI.');
+  const expiresIn = Number(json.expires_in);
+  const interval = Number(json.interval);
+  return {
+    deviceCode: json.device_code,
+    userCode: json.user_code,
+    verificationUri,
+    ...(typeof json.verification_uri_complete === 'string' ? { verificationUriComplete: json.verification_uri_complete } : {}),
+    expiresIn: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 1800,
+    interval: Number.isFinite(interval) && interval > 0 ? Math.min(interval, DEVICE_MAX_INTERVAL_S) : DEVICE_DEFAULT_INTERVAL_S,
+  };
+}
+
+export type DevicePollOutcome = { status: 'pending'; interval: number } | { status: 'done'; token: OAuth2Token };
+
+/**
+ * One poll of the token endpoint (RFC 8628 section 3.4/3.5). `authorization_pending` keeps the
+ * interval, `slow_down` adds five seconds; `access_denied` and `expired_token` fail the flow.
+ */
+export async function pollDeviceTokenOnce(params: AuthParams, context: AuthContext, deviceCode: string, interval: number): Promise<DevicePollOutcome> {
+  const url = str(params, 'accessTokenUrl');
+  if (!url) throw new AppError('AUTH_FAILED', 'OAuth 2.0 requires an access token URL.');
+  if (!deviceCode) throw new AppError('AUTH_FAILED', 'No device code; start the device flow first.');
+  const { status, json } = await postForm(params, context, url, [['grant_type', DEVICE_CODE_GRANT], ['device_code', deviceCode]], { alwaysClientIdInBody: true });
+  if (status >= 200 && status < 300 && typeof json.access_token === 'string') {
+    return { status: 'done', token: tokenFromJson(context, json as Record<string, unknown> & { access_token: string }) };
+  }
+  const error = typeof json.error === 'string' ? json.error : '';
+  const safeInterval = Number.isFinite(interval) && interval > 0 ? Math.min(interval, DEVICE_MAX_INTERVAL_S) : DEVICE_DEFAULT_INTERVAL_S;
+  if (error === 'authorization_pending') return { status: 'pending', interval: safeInterval };
+  if (error === 'slow_down') return { status: 'pending', interval: Math.min(safeInterval + 5, DEVICE_MAX_INTERVAL_S) };
+  if (error === 'expired_token') throw new AppError('AUTH_FAILED', 'The device code expired before the sign-in was completed. Start again.', { status });
+  if (error === 'access_denied') throw new AppError('AUTH_FAILED', 'The sign-in was denied.', { status });
+  throw new AppError('AUTH_FAILED', `The token endpoint rejected the request: ${errorReason(status, json)}`, { status });
+}
+
+/**
+ * Poll until the user completes the sign-in, the device code expires or `signal` aborts.
+ * `sleep` is injectable for tests.
+ */
+export async function pollDeviceToken(
+  params: AuthParams,
+  context: AuthContext,
+  device: Pick<DeviceAuthorization, 'deviceCode' | 'interval' | 'expiresIn'>,
+  options: { signal?: AbortSignal; sleep?: (ms: number, signal?: AbortSignal) => Promise<void> } = {},
+): Promise<OAuth2Token> {
+  const sleep = options.sleep ?? defaultSleep;
+  const deadline = context.now() + device.expiresIn * 1000;
+  let interval = device.interval;
+  for (;;) {
+    if (options.signal?.aborted) throw new AppError('REQUEST_CANCELLED', 'The device flow was cancelled.');
+    if (context.now() > deadline) throw new AppError('AUTH_FAILED', 'The device code expired before the sign-in was completed. Start again.');
+    const outcome = await pollDeviceTokenOnce(params, context, device.deviceCode, interval);
+    if (outcome.status === 'done') return outcome.token;
+    interval = outcome.interval;
+    await sleep(interval * 1000, options.signal);
+  }
+}
+
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal?.removeEventListener('abort', done);
+      clearTimeout(timer);
+      resolve();
+    }
+    signal?.addEventListener('abort', done, { once: true });
+  });
 }
 
 function extras(params: AuthParams): Array<[string, string]> {
@@ -161,6 +285,9 @@ export const oauth2Provider: AuthProvider = {
         } catch (error) {
           if (grant !== 'client_credentials' && grant !== 'password_credentials') throw error;
         }
+      }
+      if (!token && grant === 'device_code') {
+        throw new AppError('AUTH_FAILED', 'No valid OAuth 2.0 access token. Use "Get New Access Token" in the Authorization tab to complete the device sign-in.');
       }
       if (!token && grant === 'client_credentials') {
         token = await fetchClientCredentialsToken(params, context);

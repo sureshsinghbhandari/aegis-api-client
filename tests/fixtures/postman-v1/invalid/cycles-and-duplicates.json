@@ -1,0 +1,58 @@
+{
+  "id": "v1-hostile",
+  "name": "",
+  "order": ["req_a", "req_a", "req_missing", 42],
+  "folders_order": ["fld_a", "fld_missing"],
+  "__proto__": { "polluted": "top" },
+  "x-unknown-top": true,
+  "folders": [
+    { "id": "fld_a", "name": "A", "order": ["req_b"], "folders_order": ["fld_b"], "__proto__": { "polluted": "folder" }, "protocolProfileBehavior": { "followRedirects": false, "__proto__": { "polluted": "profile" } } },
+    { "id": "fld_b", "name": "B", "order": [], "folders_order": ["fld_a"] },
+    { "id": "fld_a", "name": "A duplicate", "order": [], "folders_order": [] },
+    { "name": "No id", "order": [], "folders_order": [] },
+    "not an object"
+  ],
+  "requests": [
+    {
+      "id": "req_a",
+      "name": "A request",
+      "url": "https://u:p-literal@example.com/a?x=1",
+      "method": "GET",
+      "headers": 42,
+      "pathVariables": { "__proto__": { "polluted": "pv" }, "id": "1" },
+      "dataMode": "hologram",
+      "__proto__": { "polluted": "request" },
+      "x-unknown": { "deep": [1, 2] },
+      "currentHelper": "oAuth2",
+      "helperAttributes": { "id": "oAuth2", "accessToken": "at-literal", "addTokenTo": "header", "tokenType": "Bearer", "nested": { "a": 1 } },
+      "responses": [{ "name": "r", "responseCode": { "code": "abc" }, "headers": "not an array", "text": "x" }, "not an object"]
+    },
+    {
+      "id": "req_b",
+      "name": "B request",
+      "url": "https://example.com/b",
+      "method": "POST",
+      "dataMode": "params",
+      "data": [
+        { "key": "a", "value": "../../etc/passwd", "type": "file", "enabled": true },
+        { "key": "b", "value": "C:\\Windows\\win.ini", "type": "file", "enabled": true },
+        { "key": "c", "value": "files/ok.txt", "type": "file", "enabled": true },
+        { "key": "d", "value": "text", "type": "text", "enabled": true },
+        "not an object"
+      ],
+      "currentHelper": "basicAuth",
+      "responses": []
+    },
+    {
+      "id": "req_bin",
+      "name": "Binary with traversal",
+      "url": "https://example.com/bin",
+      "method": "PUT",
+      "dataMode": "binary",
+      "rawModeData": "..\\..\\boot.ini",
+      "responses": []
+    },
+    { "name": "No id, no order", "url": "https://example.com/noid", "method": "GET", "dataMode": "raw", "rawModeData": ["a", "b"], "dataOptions": { "raw": { "language": "yaml" } }, "folder": "fld_missing" },
+    "not an object"
+  ]
+}

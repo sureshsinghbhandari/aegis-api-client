@@ -1,24 +1,35 @@
-import { createHmac, createSign, type KeyObject } from 'node:crypto';
+import { constants, createHmac, createSign, type KeyObject } from 'node:crypto';
 import { AppError } from '@aegis/core';
+import { loadPrivateKey } from './keys';
 import { bool, emptyResult, str, type AuthProvider } from './types';
 
 const b64url = (input: Buffer | string): string => Buffer.from(input).toString('base64url');
 
 const HMAC: Record<string, string> = { HS256: 'sha256', HS384: 'sha384', HS512: 'sha512' };
 const RSA: Record<string, string> = { RS256: 'RSA-SHA256', RS384: 'RSA-SHA384', RS512: 'RSA-SHA512' };
+/** ECDSA (JWS requires the raw R||S "ieee-p1363" signature encoding, not DER). */
+const ECDSA: Record<string, { hash: string; curve: string; size: number }> = {
+  ES256: { hash: 'sha256', curve: 'prime256v1', size: 32 },
+  ES384: { hash: 'sha384', curve: 'secp384r1', size: 48 },
+  ES512: { hash: 'sha512', curve: 'secp521r1', size: 66 },
+};
+/** RSASSA-PSS with MGF1 and a salt as long as the digest (RFC 7518 section 3.5). */
+const PSS: Record<string, string> = { PS256: 'sha256', PS384: 'sha384', PS512: 'sha512' };
+
+export const JWT_ALGORITHMS_SUPPORTED = [...Object.keys(HMAC), ...Object.keys(RSA), ...Object.keys(ECDSA), ...Object.keys(PSS)];
 
 export interface JwtSignOptions {
   algorithm: string;
   /** HMAC secret (utf8, or base64 when `secretIsBase64`). */
   secret?: string;
   secretIsBase64?: boolean;
-  /** PEM private key for RS*. */
+  /** Private key (PEM, data: URI or KeyObject) for the RS, ES and PS algorithms. */
   privateKey?: string | KeyObject;
   payload: Record<string, unknown>;
   header?: Record<string, unknown>;
 }
 
-/** Sign a compact JWS. Supports HS256/384/512 and RS256/384/512. */
+/** Sign a compact JWS. Supports HS256/384/512, RS256/384/512, ES256/384/512 and PS256/384/512. */
 export function signJwt(options: JwtSignOptions): string {
   const alg = options.algorithm.toUpperCase();
   const header = { alg, typ: 'JWT', ...(options.header ?? {}) };
@@ -28,13 +39,32 @@ export function signJwt(options: JwtSignOptions): string {
     const key = options.secretIsBase64 ? Buffer.from(options.secret, 'base64') : Buffer.from(options.secret, 'utf8');
     return `${signingInput}.${b64url(createHmac(HMAC[alg]!, key).update(signingInput).digest())}`;
   }
-  if (RSA[alg]) {
+  if (RSA[alg] || ECDSA[alg] || PSS[alg]) {
     if (!options.privateKey) throw new AppError('AUTH_FAILED', 'A private key is required to sign this JWT.');
-    const signer = createSign(RSA[alg]!);
-    signer.update(signingInput);
-    return `${signingInput}.${b64url(signer.sign(options.privateKey))}`;
+    const key = loadPrivateKey(options.privateKey, 'JWT private key');
+    let signature: Buffer;
+    if (RSA[alg]) {
+      assertKeyType(key, 'rsa', alg);
+      signature = createSign(RSA[alg]!).update(signingInput).sign(key);
+    } else if (ECDSA[alg]) {
+      const ec = ECDSA[alg]!;
+      assertKeyType(key, 'ec', alg);
+      const curve = key.asymmetricKeyDetails?.namedCurve;
+      if (curve && curve !== ec.curve) throw new AppError('AUTH_FAILED', `${alg} requires a ${ec.curve} key; the given key uses ${curve}.`);
+      signature = createSign(ec.hash).update(signingInput).sign({ key, dsaEncoding: 'ieee-p1363' });
+    } else {
+      assertKeyType(key, 'rsa', alg);
+      signature = createSign(PSS[alg]!).update(signingInput).sign({ key, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: constants.RSA_PSS_SALTLEN_DIGEST });
+    }
+    return `${signingInput}.${b64url(signature)}`;
   }
-  throw new AppError('AUTH_FAILED', `Unsupported JWT algorithm "${options.algorithm}". Supported: HS256, HS384, HS512, RS256, RS384, RS512.`);
+  throw new AppError('AUTH_FAILED', `Unsupported JWT algorithm "${options.algorithm}". Supported: ${JWT_ALGORITHMS_SUPPORTED.join(', ')}.`);
+}
+
+function assertKeyType(key: KeyObject, expected: 'rsa' | 'ec', alg: string): void {
+  const type = key.asymmetricKeyType;
+  const ok = expected === 'rsa' ? type === 'rsa' || type === 'rsa-pss' : type === 'ec';
+  if (!ok) throw new AppError('AUTH_FAILED', `${alg} requires an ${expected === 'rsa' ? 'RSA' : 'EC'} private key (got ${type ?? 'an unknown key type'}).`);
 }
 
 export interface DecodedJwt {

@@ -28,7 +28,8 @@
       "@aegis/scripting": ["./packages/scripting/src/index.ts"],
       "@aegis/postman": ["./packages/postman/src/index.ts"],
       "@aegis/testing": ["./packages/testing/src/index.ts"],
-      "@aegis/app": ["./packages/app/src/index.ts"]
+      "@aegis/app": ["./packages/app/src/index.ts"],
+      "@aegis/codegen": ["./packages/codegen/src/index.ts"]
     }
   },
   "include": ["packages/**/*.ts", "apps/**/*.ts", "apps/**/*.tsx", "tests/**/*.ts", "scripts/**/*.ts", "vitest.config.ts", "drizzle.config.ts", "playwright.config.ts"],

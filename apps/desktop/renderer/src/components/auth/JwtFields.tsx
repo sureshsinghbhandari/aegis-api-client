@@ -1,12 +1,13 @@
 import type { AuthConfig, AuthParamValue } from '@aegis/core';
 import { Checkbox } from '../ui';
 import { AuthRow, SecretParam, SelectParam, TextParam } from './AuthRow';
-import { JWT_ALGORITHMS, jsonError, param, paramBool } from './authModel';
+import { isAsymmetricJwtAlgorithm, JWT_ALGORITHMS, jsonError, param, paramBool } from './authModel';
 
 export function JwtFields({ auth, set }: { auth: AuthConfig; set(key: string, value: AuthParamValue): void }) {
   const common = { auth, set };
   const algorithm = param(auth, 'algorithm', 'HS256');
-  const rsa = algorithm.startsWith('RS');
+  // RS*, ES* and PS* are signed with a private key; HS* with a shared secret.
+  const rsa = isAsymmetricJwtAlgorithm(algorithm);
   const payload = param(auth, 'payload', '{}');
   const header = param(auth, 'header');
   const payloadError = jsonError(payload);

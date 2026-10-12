@@ -9,11 +9,16 @@ export type SecretMode =
   /** Secret fields are blanked (export without secrets). Variable references (`{{x}}`) are kept. */
   | 'blank';
 
-export function isSecretAuthParam(type: string, key: string): boolean {
+export function isSecretAuthParam(type: string, key: string, providerId?: string): boolean {
+  if (key === 'providerId') return false;
   const known = AUTH_SECRET_PARAMS[type];
   if (known) return known.includes(key);
+  // `custom` providers (digest, hawk, edgegrid, asap, ...): the provider's own secret keys plus anything that looks sensitive.
+  if (providerId && AUTH_SECRET_PARAMS[providerId]?.includes(key)) return true;
   return isSensitiveKey(key);
 }
+
+const providerIdOf = (auth: AuthConfig): string | undefined => (auth.type === 'custom' && typeof auth.params.providerId === 'string' ? auth.params.providerId : undefined);
 
 /** Moves credential values out of ordinary rows into secret storage and back. */
 export class SecretVault {
@@ -24,8 +29,9 @@ export class SecretVault {
     const prefix = `auth:${ownerKey}:`;
     const plain = new Map<string, string>();
     const params: Record<string, AuthParamValue> = {};
+    const providerId = providerIdOf(auth);
     for (const [key, value] of Object.entries(auth.params)) {
-      if (typeof value === 'string' && value !== '' && isSecretAuthParam(auth.type, key)) {
+      if (typeof value === 'string' && value !== '' && isSecretAuthParam(auth.type, key, providerId)) {
         if (isVariableReferenceOnly(value)) {
           params[key] = value;
         } else if (isSecretRef(value)) {
@@ -49,10 +55,11 @@ export class SecretVault {
   openAuth(auth: AuthConfig, mode: SecretMode): AuthConfig {
     if (mode === 'refs') return auth;
     const params: Record<string, AuthParamValue> = {};
+    const providerId = providerIdOf(auth);
     for (const [key, value] of Object.entries(auth.params)) {
       if (isSecretRef(value)) {
         params[key] = mode === 'resolve' ? (this.storage.getSync(secretRefKey(value)) ?? '') : '';
-      } else if (mode === 'blank' && typeof value === 'string' && value !== '' && isSecretAuthParam(auth.type, key) && !isVariableReferenceOnly(value)) {
+      } else if (mode === 'blank' && typeof value === 'string' && value !== '' && isSecretAuthParam(auth.type, key, providerId) && !isVariableReferenceOnly(value)) {
         params[key] = '';
       } else {
         params[key] = value;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import type { KeyValueEntry } from '@aegis/core';
+import { VariableInput } from './VariableInput';
 
 /* ------------------------------------------------------------------ buttons */
 
@@ -179,10 +180,12 @@ export interface KeyValueTableProps {
   /** Suggestions for the key column (e.g. common header names). */
   keySuggestions?: string[];
   readOnlyKeys?: boolean;
+  /** Offer `{{variable}}` autocomplete/hover/unresolved highlighting in the key and value cells (active request's scopes). */
+  variableHints?: boolean;
 }
 
 /** Editable key/value grid with enable checkboxes and an always-present empty row. */
-export function KeyValueTable({ rows, onChange, keyPlaceholder = 'Key', valuePlaceholder = 'Value', showDescription = true, maskValues, keySuggestions, readOnlyKeys }: KeyValueTableProps) {
+export function KeyValueTable({ rows, onChange, keyPlaceholder = 'Key', valuePlaceholder = 'Value', showDescription = true, maskValues, keySuggestions, readOnlyKeys, variableHints }: KeyValueTableProps) {
   const listId = useRef(`kv-${Math.random().toString(36).slice(2)}`).current;
   const display = [...rows, { key: '', value: '', enabled: true } as KeyValueEntry];
   const update = (i: number, patch: Partial<KeyValueEntry>) => {
@@ -210,8 +213,16 @@ export function KeyValueTable({ rows, onChange, keyPlaceholder = 'Key', valuePla
         return (
           <div key={i} className={`kv-row ${showDescription ? '' : 'no-desc'} ${r.enabled ? '' : 'disabled'}`}>
             <input type="checkbox" aria-label="Enabled" checked={r.enabled} disabled={isGhost} onChange={(e) => update(i, { enabled: e.target.checked })} />
-            <input value={r.key} placeholder={keyPlaceholder} list={keySuggestions ? listId : undefined} readOnly={readOnlyKeys && !isGhost} spellCheck={false} onChange={(e) => update(i, { key: e.target.value })} />
-            <input value={r.value} placeholder={valuePlaceholder} type={maskValues ? 'password' : 'text'} spellCheck={false} onChange={(e) => update(i, { value: e.target.value })} />
+            {variableHints ? (
+              <VariableInput value={r.key} placeholder={keyPlaceholder} list={keySuggestions ? listId : undefined} readOnly={readOnlyKeys && !isGhost} onChange={(key) => update(i, { key })} />
+            ) : (
+              <input value={r.key} placeholder={keyPlaceholder} list={keySuggestions ? listId : undefined} readOnly={readOnlyKeys && !isGhost} spellCheck={false} onChange={(e) => update(i, { key: e.target.value })} />
+            )}
+            {variableHints && !maskValues ? (
+              <VariableInput value={r.value} placeholder={valuePlaceholder} onChange={(value) => update(i, { value })} />
+            ) : (
+              <input value={r.value} placeholder={valuePlaceholder} type={maskValues ? 'password' : 'text'} spellCheck={false} onChange={(e) => update(i, { value: e.target.value })} />
+            )}
             {showDescription && <input value={r.description ?? ''} placeholder="Description" onChange={(e) => update(i, { description: e.target.value })} />}
             <button type="button" className="icon-btn" aria-label="Remove row" disabled={isGhost} onClick={() => onChange(rows.filter((_, idx) => idx !== i))}>
               ✕
@@ -283,10 +294,12 @@ export const METHOD_COLORS: Record<string, string> = {
   OPTIONS: 'var(--m-options)',
 };
 
+/** Method badge. Long custom methods (e.g. PROPFIND, CONNECT) are shown in full in a narrower font instead of being cut off. */
 export function MethodLabel({ method }: { method: string }) {
+  const upper = method.toUpperCase();
   return (
-    <span className="method" style={{ color: METHOD_COLORS[method.toUpperCase()] ?? 'var(--text-dim)' }}>
-      {method.length > 5 ? method.slice(0, 4) : method}
+    <span className={`method ${upper.length > 5 ? 'method-long' : ''}`} title={upper} style={{ color: METHOD_COLORS[upper] ?? 'var(--text-dim)' }}>
+      {upper}
     </span>
   );
 }

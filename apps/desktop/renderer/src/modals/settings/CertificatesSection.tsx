@@ -112,14 +112,34 @@ export function CertificatesSection() {
   );
 }
 
+type ClientFormat = 'pem' | 'pfx';
+
 function AddCertificate({ kind, onClose, onAdded }: { kind: Kind; onClose(): void; onAdded(): void }) {
   const [name, setName] = useState('');
   const [hostPattern, setHostPattern] = useState('');
+  const [format, setFormat] = useState<ClientFormat>('pem');
   const [certPem, setCertPem] = useState('');
   const [keyPem, setKeyPem] = useState('');
+  const [pfx, setPfx] = useState<{ path: string; name: string } | null>(null);
   const [passphrase, setPassphrase] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const pickPfx = async () => {
+    try {
+      const f = await api.tools.pickFile({ purpose: 'upload' });
+      if (!f) return;
+      if (f.size > 2 * 1024 * 1024) {
+        setError('The file is too large to be a PKCS#12 bundle.');
+        return;
+      }
+      setError(null);
+      setPfx({ path: f.path, name: f.name });
+      if (!name) setName(f.name.replace(/\.[^.]+$/, ''));
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
 
   const pickFile = async (purpose: 'certificate' | 'key') => {
     try {
@@ -136,9 +156,10 @@ function AddCertificate({ kind, onClose, onAdded }: { kind: Kind; onClose(): voi
     }
   };
 
+  const usePfx = kind === 'client' && format === 'pfx';
   const certOk = looksLikePem(certPem, 'CERTIFICATE');
   const keyOk = kind === 'ca' || looksLikePem(keyPem, 'PRIVATE KEY');
-  const valid = name.trim() !== '' && certOk && keyOk;
+  const valid = name.trim() !== '' && (usePfx ? pfx !== null : certOk && keyOk);
 
   const add = async () => {
     setBusy(true);
@@ -148,11 +169,13 @@ function AddCertificate({ kind, onClose, onAdded }: { kind: Kind; onClose(): voi
         kind,
         name: name.trim(),
         ...(hostPattern.trim() ? { hostPattern: hostPattern.trim() } : {}),
-        certPem,
-        ...(kind === 'client' ? { keyPem, ...(passphrase ? { passphrase } : {}) } : {}),
+        ...(usePfx ? { pfxPath: pfx!.path } : { certPem }),
+        ...(kind === 'client' && !usePfx ? { keyPem } : {}),
+        ...(kind === 'client' && passphrase ? { passphrase } : {}),
       });
       useApp.getState().toast('Certificate added', 'success');
       setKeyPem('');
+      setPfx(null);
       setPassphrase('');
       onAdded();
     } catch (e) {
@@ -172,32 +195,65 @@ function AddCertificate({ kind, onClose, onAdded }: { kind: Kind; onClose(): voi
           <input value={hostPattern} onChange={(e) => setHostPattern(e.target.value)} placeholder="*.example.com" />
         </Field>
       )}
-      <div className="field">
-        <span className="field-label">Certificate (PEM)</span>
-        <textarea rows={5} className="mono" spellCheck={false} value={certPem} onChange={(e) => setCertPem(e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" aria-label="Certificate PEM" />
-        <div className="set-row">
-          <Button size="sm" onClick={() => void pickFile('certificate')}>
-            Choose file…
-          </Button>
-          {certPem && !certOk && <span className="field-hint field-err">This does not look like a PEM certificate.</span>}
-        </div>
-      </div>
       {kind === 'client' && (
-        <>
-          <div className="field">
-            <span className="field-label">Private key (PEM)</span>
-            <textarea rows={4} className="mono" spellCheck={false} value={keyPem} onChange={(e) => setKeyPem(e.target.value)} placeholder="-----BEGIN PRIVATE KEY-----" aria-label="Private key PEM" />
-            <div className="set-row">
-              <Button size="sm" onClick={() => void pickFile('key')}>
-                Choose file…
-              </Button>
-              {keyPem && !keyOk && <span className="field-hint field-err">This does not look like a PEM private key.</span>}
-            </div>
+        <fieldset className="imp-kinds">
+          <legend className="field-label">Format</legend>
+          <label className="imp-kind">
+            <input type="radio" name="cert-format" checked={format === 'pem'} onChange={() => setFormat('pem')} />
+            <span>
+              <strong>PEM</strong>
+              <span className="field-hint">Certificate and private key as separate PEM files or text</span>
+            </span>
+          </label>
+          <label className="imp-kind">
+            <input type="radio" name="cert-format" checked={format === 'pfx'} onChange={() => setFormat('pfx')} />
+            <span>
+              <strong>PKCS#12 (.pfx / .p12)</strong>
+              <span className="field-hint">One bundle file with certificate and key; the bundle and its passphrase go to secure storage</span>
+            </span>
+          </label>
+        </fieldset>
+      )}
+      {!usePfx && (
+        <div className="field">
+          <span className="field-label">Certificate (PEM)</span>
+          <textarea rows={5} className="mono" spellCheck={false} value={certPem} onChange={(e) => setCertPem(e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" aria-label="Certificate PEM" />
+          <div className="set-row">
+            <Button size="sm" onClick={() => void pickFile('certificate')}>
+              Choose file…
+            </Button>
+            {certPem && !certOk && <span className="field-hint field-err">This does not look like a PEM certificate.</span>}
           </div>
-          <Field label="Key passphrase (optional)">
-            <input type="password" autoComplete="new-password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} />
-          </Field>
-        </>
+        </div>
+      )}
+      {kind === 'client' && !usePfx && (
+        <div className="field">
+          <span className="field-label">Private key (PEM)</span>
+          <textarea rows={4} className="mono" spellCheck={false} value={keyPem} onChange={(e) => setKeyPem(e.target.value)} placeholder="-----BEGIN PRIVATE KEY-----" aria-label="Private key PEM" />
+          <div className="set-row">
+            <Button size="sm" onClick={() => void pickFile('key')}>
+              Choose file…
+            </Button>
+            {keyPem && !keyOk && <span className="field-hint field-err">This does not look like a PEM private key.</span>}
+          </div>
+        </div>
+      )}
+      {usePfx && (
+        <div className="field">
+          <span className="field-label">PKCS#12 bundle</span>
+          <div className="set-row">
+            <Button size="sm" onClick={() => void pickPfx()}>
+              Choose .pfx / .p12 file…
+            </Button>
+            <span className="mono">{pfx ? pfx.name : 'No file selected'}</span>
+          </div>
+          <span className="field-hint">The file is read by the application process when you add it; its content is never shown.</span>
+        </div>
+      )}
+      {kind === 'client' && (
+        <Field label={usePfx ? 'Bundle passphrase (optional)' : 'Key passphrase (optional)'}>
+          <input type="password" autoComplete="new-password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} />
+        </Field>
       )}
       {error && <ErrorBanner message={error} />}
       <div className="set-row">

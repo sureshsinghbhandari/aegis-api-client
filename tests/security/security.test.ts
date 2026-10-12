@@ -22,6 +22,8 @@ import {
   sanitizeFileName,
   isExecutableExtension,
 } from '@aegis/security';
+import { resolveHostOverrides } from '@aegis/app';
+import { buildHttpRequestSpec, resolveUploadPath } from '@aegis/http-client';
 import { IPC_SCHEMAS, assertSchemasComplete } from '../../apps/desktop/main/ipc-schemas';
 import { createTestApp, type TestApp } from '../helpers/app';
 
@@ -57,6 +59,32 @@ describe('secret redaction', () => {
     expect(JSON.stringify(entries)).not.toMatch(/p4ss|Bearer q/);
     new AuditLogger({ append: (e) => void entries.push(e) }, () => false).log('EXECUTE_REQUEST', {});
     expect(entries).toHaveLength(1); // disabled logger writes nothing
+  });
+});
+
+describe('WP-B policy rows: insecure TLS per request, host overrides, working directory', () => {
+  it('policy allowHostOverrides parses, defaults to true and disables overrides when false', () => {
+    expect(parsePolicy({}).allowHostOverrides).toBe(true);
+    expect(parsePolicy({ allowHostOverrides: false }).allowHostOverrides).toBe(false);
+    expect(parsePolicy({ allowHostOverrides: 'false' }).allowHostOverrides).toBe(true); // wrong type ignored
+    const entries = [{ host: 'api.test', address: '10.0.0.1' }];
+    expect(resolveHostOverrides(entries, parsePolicy({})).hosts).toEqual({ 'api.test': '10.0.0.1' });
+    const denied = resolveHostOverrides(entries, parsePolicy({ allowHostOverrides: false }));
+    expect(denied.hosts).toEqual({});
+    expect(denied.notes.join(' ')).toMatch(/disabled by organization policy/);
+  });
+  it('a per-request strict-SSL=off setting never reaches the engine unless policy allows insecure TLS', () => {
+    // The executor derives the TLS options from policy; the engine itself must still default to verification.
+    const spec = buildHttpRequestSpec(emptyRequestDraft({ url: 'https://h/', settings: { verifyTls: false } }), { id: 'x', limits: { timeoutMs: 1, followRedirects: true, maxRedirects: 1, maxResponseBytes: 1, maxRequestBytes: 1 }, tls: { rejectUnauthorized: true } });
+    expect(spec.tls.rejectUnauthorized).toBe(true); // prepare never flips it; only the policy-aware executor may
+  });
+  it('relative upload paths are confined to the working directory', () => {
+    const root = path.join(os.tmpdir(), 'aegis-workdir');
+    expect(() => resolveUploadPath('data/x.bin')).toThrow(/working directory/);
+    expect(resolveUploadPath('data/x.bin', { workingDirectory: root })).toBe(path.resolve(root, 'data', 'x.bin'));
+    for (const bad of ['../x.bin', 'a/../../x.bin', '..\\x.bin', '\\\\srv\\share\\x', 'file:///x']) {
+      expect(() => resolveUploadPath(bad, { workingDirectory: root }), bad).toThrow();
+    }
   });
 });
 
@@ -260,6 +288,51 @@ describe('SQL injection resistance & policy enforcement at the service layer', (
     expect((await t.api.collections.list({ workspaceId: wsId })).length).toBe(before);
     // a failed import is recorded with its warnings for diagnostics
     expect(t.app.ctx.storage.repos.imports.listJobs().some((j) => j.status === 'failed')).toBe(true);
+  });
+});
+
+describe('WP-E: Markdown description preview (XSS corpus) and network log redaction', () => {
+  const markdownPayloads = [
+    '<script>alert(1)</script>',
+    '<img src=x onerror=alert(1)>',
+    '[x](javascript:alert(1))',
+    '[x](JaVaScRiPt:alert(1))',
+    '![x](https://evil.test/track.png)',
+    '<a href="javascript:alert(1)">x</a>',
+    '<iframe src="https://evil.test"></iframe>',
+    '<svg onload=alert(1)>',
+    '<base href="https://evil.test/"><link rel="stylesheet" href="https://evil.test/x.css">',
+    '[x](data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)',
+    '| <script>x</script> |\n|---|\n| <img src=x onerror=1> |',
+  ];
+  it('renders every payload as inert text inside a CSP-protected sandbox document', async () => {
+    const { renderMarkdown, buildMarkdownDocument } = await import('../../apps/desktop/renderer/src/lib/markdown');
+    for (const p of markdownPayloads) {
+      const html = renderMarkdown(p);
+      expect(html, p).not.toMatch(/<script|<iframe|<object|<embed|<base|<link|<svg|<img src="(?!data:image\/)/i);
+      expect(html, p).not.toMatch(/\son[a-z]+\s*=\s*"/i);
+      expect(html, p).not.toMatch(/(href|src)="[^"]*(javascript:|evil\.test|data:text)/i);
+      const doc = buildMarkdownDocument(p);
+      expect(doc).toContain("default-src 'none'");
+      expect(doc).not.toMatch(/<script|onerror=|<iframe/i);
+    }
+  });
+  it('the console network log never carries credential header values', async () => {
+    const { entriesFromResult, REDACTED_VALUE } = await import('../../apps/desktop/renderer/src/lib/network-log');
+    const result = {
+      executionId: 'e',
+      ok: true,
+      request: { method: 'GET', url: 'https://h.test/', headers: [{ name: 'Authorization', value: 'Bearer leak-1' }, { name: 'X-Api-Key', value: 'leak-2' }], bodyPreview: '' },
+      response: { responseId: 'r', status: 200, statusText: 'OK', httpVersion: 'HTTP/1.1', headers: [{ name: 'Set-Cookie', value: 'sid=leak-3' }], cookies: [], contentType: '', size: 0, requestSize: 0, url: 'https://h.test/', redirects: [], timings: { waitingMs: 1, downloadMs: 1, totalMs: 2, startedAt: 1 }, bodyPreview: '', previewBytes: 0, isBinary: false, notes: [] },
+      tests: [],
+      console: [],
+      warnings: [],
+      unresolvedVariables: [],
+      variableChanges: {},
+    };
+    const dump = JSON.stringify(entriesFromResult(result, { request: 'R', executionId: 'e' }));
+    expect(dump).not.toMatch(/leak-[123]/);
+    expect(dump).toContain(REDACTED_VALUE);
   });
 });
 

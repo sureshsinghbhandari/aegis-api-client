@@ -7,7 +7,7 @@ import type {
   TestResult,
   VariableScopeName,
 } from '@aegis/core';
-import { MAX_TESTS } from './limits';
+import { MAX_TESTS, MAX_VISUALIZER_CHARS } from './limits';
 
 export const SCOPE_NAMES: readonly VariableScopeName[] = ['globals', 'environment', 'collectionVariables', 'variables', 'iterationData'];
 
@@ -23,6 +23,8 @@ export interface GuestSnapshot {
   request: ScriptRequestSnapshot | undefined;
   skipRequest: boolean;
   nextRequest: { called: boolean; value: string | null };
+  /** Raw (unsanitised) HTML from `pm.visualizer.set()`, size-capped. */
+  visualizer: string | undefined;
 }
 
 type Json = unknown;
@@ -129,6 +131,7 @@ export function parseGuestSnapshot(json: string, input: ScriptRunInput, redact: 
     request: input.phase === 'prerequest' ? parseRequest(raw.request, input.request) : undefined,
     skipRequest: input.phase === 'prerequest' && raw.skipRequest === true,
     nextRequest: { called: next.called === true, value: typeof next.value === 'string' ? next.value : null },
+    visualizer: typeof raw.visualizer === 'string' ? raw.visualizer.slice(0, MAX_VISUALIZER_CHARS) : undefined,
   };
 }
 

@@ -1,0 +1,11 @@
+{
+  "version": "2",
+  "__proto__": { "polluted": "top" },
+  "collections": [
+    { "info": { "name": "Bad items" }, "item": "not an array" },
+    { "name": "v1 without requests", "order": [] },
+    { "requests": "not an array", "name": "v1 broken requests" }
+  ],
+  "environments": "not an array",
+  "globals": { "nope": true }
+}

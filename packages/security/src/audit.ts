@@ -7,6 +7,7 @@ export type AuditAction =
   | 'DELETE_COLLECTION'
   | 'EXECUTE_REQUEST'
   | 'EXECUTE_SCRIPT'
+  | 'SCRIPT_COOKIE_WRITE'
   | 'CHANGE_ENVIRONMENT'
   | 'CHANGE_SECURITY_SETTING'
   | 'DELETE_HISTORY'
@@ -14,7 +15,8 @@ export type AuditAction =
   | 'IMPORT_ENVIRONMENT'
   | 'EXPORT_ENVIRONMENT'
   | 'CREATE_BACKUP'
-  | 'RESTORE_BACKUP';
+  | 'RESTORE_BACKUP'
+  | 'FIND_REPLACE';
 
 export interface AuditEntry {
   action: AuditAction;

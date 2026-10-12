@@ -7,6 +7,19 @@ import { RequestPane } from './RequestPane';
 import { TabsBar } from './TabsBar';
 import '../styles/workbench.css';
 import '../styles/response.css';
+import '../styles/tools.css';
+
+export const SHORTCUT_LIST: ReadonlyArray<readonly [string, string]> = [
+  ['Ctrl+Enter', 'Send request'],
+  ['Ctrl+S', 'Save request'],
+  ['Ctrl+W', 'Close tab (asks when unsaved)'],
+  ['Ctrl+T', 'New request'],
+  ['Ctrl+Shift+T', 'Reopen closed tab'],
+  ['Ctrl+Tab / Ctrl+Shift+Tab', 'Next / previous tab'],
+  ['Ctrl+K', 'Search'],
+  ['Ctrl+Shift+F', 'Find & replace in collection'],
+  ['Ctrl+`', 'Console'],
+];
 
 function WorkbenchEmpty() {
   const newRequest = useApp((s) => s.newRequest);
@@ -25,17 +38,10 @@ function WorkbenchEmpty() {
           </div>
         }
       >
-        Open a request from the sidebar or create a new one.
+        Open a request from the sidebar or create a new one. Open tabs are restored when you restart the app.
       </EmptyState>
       <dl className="wb-shortcuts" aria-label="Keyboard shortcuts">
-        {[
-          ['Ctrl+Enter', 'Send request'],
-          ['Ctrl+S', 'Save request'],
-          ['Ctrl+W', 'Close tab'],
-          ['Ctrl+T', 'New request'],
-          ['Ctrl+Shift+T', 'Reopen closed tab'],
-          ['Ctrl+K', 'Search'],
-        ].map(([keys, label]) => (
+        {SHORTCUT_LIST.map(([keys, label]) => (
           <div key={keys}>
             <dt>
               <kbd>{keys}</kbd>
@@ -51,8 +57,12 @@ function WorkbenchEmpty() {
 export function RequestWorkbench() {
   const tabs = useApp((s) => s.tabs);
   const activeTabId = useApp((s) => s.activeTabId);
+  const layout = useApp((s) => s.layout);
   const active = tabs.find((t) => t.tabId === activeTabId) ?? null;
-  const split = useSplitter(340, 140, 1200, 'y');
+  const vertical = useSplitter(340, 140, 1200, 'y');
+  const horizontal = useSplitter(560, 320, 1600, 'x');
+  const sideBySide = layout === 'side-by-side';
+  const split = sideBySide ? horizontal : vertical;
 
   // Sending in a production environment may be refused until the user confirms (also when triggered by Ctrl+Enter).
   const handled = useRef<string | null>(null);
@@ -81,8 +91,8 @@ export function RequestWorkbench() {
     <div className="wb-root">
       <TabsBar />
       {active ? (
-        <div className="wb-split" key={active.tabId}>
-          <div className="wb-top" style={{ height: split.size }}>
+        <div className={`wb-split ${sideBySide ? 'wb-split-x' : ''}`} key={active.tabId} data-layout={layout}>
+          <div className="wb-top" style={sideBySide ? { width: split.size } : { height: split.size }}>
             <RequestPane tab={active} />
           </div>
           {split.handle}

@@ -136,7 +136,7 @@ test('send from the UI: resolved variables, status/time/size/headers, save, clos
 test('scripts: tests run, an environment variable is set from the response, results are shown', async () => {
   await win.keyboard.press('Control+t');
   await win.getByLabel('Request URL').fill('{{baseUrl}}/login');
-  await win.getByRole('tab', { name: /^Tests/ }).click();
+  await win.getByRole('tab', { name: /^Post-response/ }).click();
   const editor = win.locator('.monaco-editor').first();
   await editor.waitFor({ timeout: 30_000 });
   await editor.click();
@@ -203,5 +203,23 @@ test('theme switch and settings dialog', async () => {
   await win.getByRole('button', { name: /Settings/ }).first().click();
   await expect(win.getByRole('dialog', { name: /Settings/ })).toBeVisible();
   await win.screenshot({ path: path.join(SHOTS, '08-settings.png') });
+  await win.keyboard.press('Escape');
+});
+
+test('pre-request / post-response scripts show environment variables, and the Code modal generates a snippet', async () => {
+  await win.keyboard.press('Control+t');
+  await win.getByLabel('Request URL').fill('{{baseUrl}}/items?x=1');
+  await win.getByRole('tab', { name: /^Pre-request Script/ }).click();
+  await expect(win.getByRole('tab', { name: /^Post-response/ })).toBeVisible();
+  // the Variables pane lists the active environment's variables; secrets stay masked
+  await expect(win.getByText('baseUrl').first()).toBeVisible({ timeout: 20_000 });
+  await expect(win.locator('body')).not.toContainText('e2e-secret-token');
+  await win.screenshot({ path: path.join(SHOTS, '09-script-variables.png') });
+
+  await win.getByRole('button', { name: 'Code', exact: true }).click();
+  const dialog = win.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('/items?x=1');
+  await win.screenshot({ path: path.join(SHOTS, '10-code-snippet.png') });
   await win.keyboard.press('Escape');
 });

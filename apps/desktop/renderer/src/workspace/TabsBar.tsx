@@ -29,6 +29,24 @@ async function closeOthers(keep: string): Promise<void> {
   useApp.getState().setActiveTab(keep);
 }
 
+/** Stacked / side-by-side switch (persisted in Settings → General). */
+function LayoutToggle() {
+  const layout = useApp((s) => s.layout);
+  const setLayout = useApp((s) => s.setLayout);
+  const next = layout === 'stacked' ? 'side-by-side' : 'stacked';
+  return (
+    <IconButton label={layout === 'stacked' ? 'Switch to side-by-side layout' : 'Switch to stacked layout'} className="wb-layout" onClick={() => void setLayout(next)} aria-pressed={layout === 'side-by-side'}>
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        {layout === 'stacked' ? (
+          <path d="M2 2.5h12v11H2zM8 2.5v11" fill="none" stroke="currentColor" strokeWidth="1.3" />
+        ) : (
+          <path d="M2 2.5h12v11H2zM2 8h12" fill="none" stroke="currentColor" strokeWidth="1.3" />
+        )}
+      </svg>
+    </IconButton>
+  );
+}
+
 export function TabsBar() {
   const tabs = useApp((s) => s.tabs);
   const activeTabId = useApp((s) => s.activeTabId);
@@ -131,6 +149,8 @@ export function TabsBar() {
       <IconButton label="New request (Ctrl+T)" onClick={() => newRequest(null, null)} className="wb-newtab">
         +
       </IconButton>
+      <span className="wb-spacer" />
+      <LayoutToggle />
       {menu}
     </div>
   );
